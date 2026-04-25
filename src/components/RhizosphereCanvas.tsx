@@ -518,6 +518,11 @@ export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
+      
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+      
       const dpr = Math.min(window.devicePixelRatio || 1, MAX_CANVAS_DPR);
       viewport.width = rect.width;
       viewport.height = rect.height;
@@ -548,6 +553,11 @@ export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
     };
 
     const render = (time: number) => {
+      if (viewport.width <= 0 || viewport.height <= 0) {
+        animationFrame = window.requestAnimationFrame(render);
+        return;
+      }
+
       const reducedMotion = motionQuery.matches;
       const renderTime = reducedMotion ? 0 : time;
       const reactiveVisualState = deriveReactiveVisualState(audioRenderSnapshotRef.current);
@@ -577,14 +587,24 @@ export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
       animationFrame = window.requestAnimationFrame(render);
     };
 
+    const handleDisplayChange = () => {
+      resize();
+    };
+
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(canvas);
+    
+    window.addEventListener("resize", handleDisplayChange);
+    window.matchMedia("screen").addEventListener("change", handleDisplayChange);
+    
     resize();
     animationFrame = window.requestAnimationFrame(render);
 
     return () => {
       window.cancelAnimationFrame(animationFrame);
       resizeObserver.disconnect();
+      window.removeEventListener("resize", handleDisplayChange);
+      window.matchMedia("screen").removeEventListener("change", handleDisplayChange);
     };
   }, []);
 
