@@ -38,6 +38,17 @@ The test suite covers:
 - Deterministic mycelium graph growth and topology behavior.
 - WebSocket acceptance, validation errors, and snapshot emission.
 
+## Deployment
+
+Vercel's Vite preset deploys the static client only, so the Express/WebSocket server in `server/`
+does not run there. On `.vercel.app` deployments, the client runs the same simulation engine in
+the browser unless an explicit WebSocket URL is configured. Other production hosts try `/ws` once
+and then fall back locally if no WebSocket endpoint is available.
+
+To run the backend-owned simulation in production, deploy `npm start` on a host that supports
+WebSocket upgrades, set `MYCO_ALLOWED_ORIGINS` on that backend to your client origin, and set
+`VITE_MYCO_WS_URL=wss://your-backend.example.com/ws` before building the Vercel client.
+
 ## v1 Mapping
 
 - Amplitude drives apical tip growth pressure.

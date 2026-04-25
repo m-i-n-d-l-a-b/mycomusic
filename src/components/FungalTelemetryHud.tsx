@@ -13,6 +13,7 @@ function percent(value: number): string {
 
 function connectionLabel(connectionState: string): string {
   if (connectionState === "open") return "Open";
+  if (connectionState === "local") return "Local";
   if (connectionState === "connecting") return "Forming";
   if (connectionState === "error") return "Fault";
   return "Closed";

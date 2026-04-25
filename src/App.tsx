@@ -6,7 +6,7 @@ import { useMycoSocket } from "./hooks/useMycoSocket";
 import "./styles.css";
 
 export function App() {
-  const [isOverlayOpen, setIsOverlayOpen] = useState(true);
+  const [isOverlayOpen, setIsOverlayOpen] = useState(false);
   const overlayContentId = useId();
   const { connectionState, error, sessionId, snapshot } = useMycoSocket();
   const telemetry = snapshot?.telemetry;
@@ -16,11 +16,13 @@ export function App() {
   const statusText =
     connectionState === "open"
       ? "Backend link open"
-      : connectionState === "connecting"
-        ? "Backend link forming"
-        : connectionState === "error"
-          ? "Backend link fault"
-          : "Backend link closed";
+      : connectionState === "local"
+        ? "Local engine active"
+        : connectionState === "connecting"
+          ? "Backend link forming"
+          : connectionState === "error"
+            ? "Backend link fault"
+            : "Backend link closed";
 
   return (
     <main className="app-shell" data-connection={connectionState}>

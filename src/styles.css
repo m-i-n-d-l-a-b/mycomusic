@@ -183,8 +183,9 @@ input[type="range"] {
 }
 
 .ui-overlay[data-collapsed="true"] {
-  width: min(26rem, calc(100vw - 2.7rem));
-  max-height: 12rem;
+  width: auto;
+  max-height: 5.25rem;
+  padding: 0;
   overflow: hidden;
 }
 
@@ -197,6 +198,10 @@ input[type="range"] {
 
 .overlay-title {
   min-width: 0;
+}
+
+.ui-overlay[data-collapsed="true"] .overlay-title {
+  display: none;
 }
 
 .overlay-title h1 {
@@ -213,6 +218,11 @@ input[type="range"] {
   width: 2.75rem;
   min-height: 2.5rem;
   padding: 0;
+}
+
+.ui-overlay[data-collapsed="true"] .overlay-toggle {
+  width: 3.25rem;
+  min-height: 3.25rem;
 }
 
 .overlay-toggle-icon {
@@ -571,7 +581,8 @@ dd {
   }
 
   .ui-overlay[data-collapsed="true"] {
-    width: calc(100vw - 2rem);
+    width: auto;
+    padding: 0;
   }
 
   .overlay-topbar {
