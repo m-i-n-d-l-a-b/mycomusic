@@ -43,8 +43,8 @@ export function AudioControls() {
   const canPauseFile = isPlaying && captureSource === null;
 
   return (
-    <section className="panel audio-controls" aria-label="Audio controls">
-      <div className="panel-header">
+    <section className="overlay-section audio-controls" aria-label="Audio controls">
+      <div className="section-header">
         <div>
           <p className="eyebrow">Audio Source</p>
           <h2>Signal Acquisition</h2>

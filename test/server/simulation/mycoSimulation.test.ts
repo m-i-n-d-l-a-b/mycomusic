@@ -45,7 +45,10 @@ describe("MycoSimulation", () => {
     const simulation = new MycoSimulation({ seed: 11 });
     simulation.acceptFeature(featureFrame());
 
-    const activeSnapshot = simulation.step(1 / 30);
+    let activeSnapshot = simulation.step(1 / 30);
+    for (let i = 0; i < 7; i++) {
+      activeSnapshot = simulation.step(1 / 30);
+    }
     expect(activeSnapshot.nodes.length).toBeGreaterThan(1);
 
     vi.setSystemTime(7_000);
@@ -54,5 +57,20 @@ describe("MycoSimulation", () => {
 
     expect(staleSnapshot.nodes.length).toBe(beforeStaleStep.nodes.length);
     expect(staleSnapshot.telemetry.growthRate).toBe(0);
+  });
+
+  it("keeps the first few seconds of active growth within the visible rhizosphere", () => {
+    const simulation = new MycoSimulation({ seed: 11, staleInputMs: 10_000 });
+    simulation.acceptFeature(featureFrame());
+
+    let snapshot = simulation.step(1 / 30);
+    for (let i = 0; i < 89; i++) {
+      snapshot = simulation.step(1 / 30);
+    }
+
+    const maxRadius = Math.max(...snapshot.nodes.map((node) => Math.hypot(node.x, node.y)));
+
+    expect(snapshot.nodes.length).toBeGreaterThan(20);
+    expect(maxRadius).toBeLessThan(0.35);
   });
 });

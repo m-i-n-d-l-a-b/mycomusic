@@ -12,7 +12,7 @@ interface InternalTip extends MycoTip {
 }
 
 const DEFAULT_MAX_NODES = 640;
-const BASELINE_GROWTH_FPS = 30;
+const BASELINE_GROWTH_FPS = 8;
 
 function createPrng(seed: number): () => number {
   let state = seed >>> 0;
@@ -120,9 +120,10 @@ export class MyceliumGraph {
       return 0;
     }
 
+    const activeTips = Math.max(1, this.tips.length);
     const eventsAtBaselineFps = Math.max(
-      1,
-      Math.min(8, Math.ceil(forces.growthPressure * Math.max(1, this.tips.length)))
+      0.25,
+      Math.min(2.5, 0.35 + forces.growthPressure * Math.sqrt(activeTips))
     );
     this.growthBudget += eventsAtBaselineFps * deltaSec * BASELINE_GROWTH_FPS;
     const events = Math.floor(this.growthBudget);

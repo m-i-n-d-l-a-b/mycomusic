@@ -55,7 +55,7 @@ describe("MyceliumGraph", () => {
   it("scales growth events with elapsed time instead of snapshot tick count", () => {
     const graph = new MyceliumGraph({ seed: 7 });
 
-    graph.step(forces, 0.1);
+    graph.step(forces, 0.75);
 
     expect(graph.snapshot().nodes.length).toBeGreaterThan(3);
   });

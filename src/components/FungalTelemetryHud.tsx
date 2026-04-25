@@ -35,8 +35,8 @@ export function FungalTelemetryHud({
   const voltagePercent = percent(bioVoltageMv / 2.1);
 
   return (
-    <aside className="panel telemetry-hud" aria-label="Fungal telemetry">
-      <div className="panel-header">
+    <section className="overlay-section telemetry-hud" aria-label="Fungal telemetry">
+      <div className="section-header">
         <div>
           <p className="eyebrow">Fungal Telemetry</p>
           <h2>Living Network State</h2>
@@ -95,6 +95,6 @@ export function FungalTelemetryHud({
       </dl>
 
       {error ? <p className="error-text">{error}</p> : null}
-    </aside>
+    </section>
   );
 }

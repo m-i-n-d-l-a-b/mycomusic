@@ -22,7 +22,16 @@ const INITIAL_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 5_000;
 
 function getWebSocketUrl(): string {
+  const configuredUrl = import.meta.env.VITE_MYCO_WS_URL;
+  if (typeof configuredUrl === "string" && configuredUrl.trim()) {
+    return configuredUrl.trim();
+  }
+
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  if (import.meta.env.DEV && window.location.port === "5173") {
+    return `${protocol}//${window.location.hostname}:8787/ws`;
+  }
+
   return `${protocol}//${window.location.host}/ws`;
 }
 

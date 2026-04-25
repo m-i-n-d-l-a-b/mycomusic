@@ -10,8 +10,10 @@ interface Viewport {
   height: number;
 }
 
+const VIEWPORT_PROJECTION_SCALE = 1.15;
+
 function projectPoint(node: Pick<MycoNode, "x" | "y">, viewport: Viewport): { x: number; y: number } {
-  const scale = Math.min(viewport.width, viewport.height, 900) * 2.7;
+  const scale = Math.min(viewport.width, viewport.height, 900) * VIEWPORT_PROJECTION_SCALE;
   return {
     x: viewport.width / 2 + node.x * scale,
     y: viewport.height / 2 + node.y * scale,

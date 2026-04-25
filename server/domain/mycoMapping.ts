@@ -102,7 +102,7 @@ export function mapAudioToMyco(
   const amBias = morphology === "AM" ? 1 : 0;
   const edgeThickness = clamp(0.24 + bass * 0.62 + ecmBias * 0.16 - amBias * 0.08);
   const branchProbability = clamp(0.08 + treble * 0.42 + amBias * 0.2 + pulse * 0.18);
-  const extensionRate = clamp(0.018 + growthPressure * 0.075 + amBias * 0.018 - ecmBias * 0.012);
+  const extensionRate = clamp(0.008 + growthPressure * 0.028 + amBias * 0.008 - ecmBias * 0.004);
   const anastomosisRate = clamp(harmony * 0.85 + amplitude * 0.15);
   const symbioticState: SymbioticState =
     harmony >= 0.58 && flux < 0.22 ? "Nutrient Transfer" : "Resource Hoarding";
