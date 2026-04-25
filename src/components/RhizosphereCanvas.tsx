@@ -1,5 +1,13 @@
 import { useEffect, useRef } from "react";
+import type { BandPulses, Bands8 } from "../audio/types";
+import { useAudioStore } from "../store/audioStore";
 import type { Morphology, MycoEdge, MycoNode, MycoSnapshotMessage } from "../../server/domain/mycoProtocol";
+import {
+  type ReactiveVisualState,
+  computeEdgeReveal,
+  computeTravelPulse,
+  deriveReactiveVisualState,
+} from "./rhizosphereRendering";
 
 interface RhizosphereCanvasProps {
   snapshot: MycoSnapshotMessage | null;
@@ -24,9 +32,24 @@ interface SnapshotTransition {
   durationMs: number;
 }
 
+interface AudioRenderSnapshot {
+  bands: Bands8;
+  pulses: BandPulses;
+  isActive: boolean;
+}
+
 const VIEWPORT_PROJECTION_SCALE = 1.15;
 const MAX_CANVAS_DPR = 2;
 const MAX_SNAPSHOT_INTERPOLATION_MS = 120;
+
+function readAudioRenderSnapshot(): AudioRenderSnapshot {
+  const state = useAudioStore.getState();
+  return {
+    bands: state.bands,
+    pulses: state.pulses,
+    isActive: state.isPlaying || state.captureSource !== null,
+  };
+}
 
 function projectPoint(node: Pick<MycoNode, "x" | "y">, viewport: Viewport): { x: number; y: number } {
   const scale = Math.min(viewport.width, viewport.height, 900) * VIEWPORT_PROJECTION_SCALE;
@@ -130,6 +153,45 @@ function drawSubstrate(
   }
 }
 
+function drawReactiveAudioField(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  reactive: ReactiveVisualState,
+  time: number,
+  reducedMotion: boolean
+) {
+  if (reactive.isSilent) return;
+
+  const { width, height } = viewport;
+  const centerDrift = reducedMotion ? 0 : Math.sin(time * 0.00022) * width * 0.045;
+  const centerX = width / 2 + centerDrift;
+  const centerY = height / 2 + (reducedMotion ? 0 : Math.cos(time * 0.00018) * height * 0.035);
+  const radius = Math.max(width, height) * (0.26 + reactive.substrateBreath * 0.24);
+  const glow = context.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+
+  glow.addColorStop(0, `rgba(126, 255, 194, ${0.05 + reactive.substrateBreath * 0.16})`);
+  glow.addColorStop(0.42, `rgba(92, 231, 255, ${reactive.trebleEnergy * 0.075})`);
+  glow.addColorStop(1, "rgba(2, 6, 5, 0)");
+
+  context.save();
+  context.globalCompositeOperation = "lighter";
+  context.fillStyle = glow;
+  context.fillRect(0, 0, width, height);
+
+  const ringCount = 3;
+  for (let index = 0; index < ringCount; index += 1) {
+    const ringPhase = reducedMotion ? 0 : (time * 0.00018 + index * 0.23) % 1;
+    const ringRadius = radius * (0.36 + index * 0.18 + ringPhase * 0.16);
+    context.beginPath();
+    context.ellipse(centerX, centerY, ringRadius * 1.35, ringRadius * 0.48, -0.18, 0, Math.PI * 2);
+    context.strokeStyle = `rgba(168, 255, 224, ${0.025 + reactive.bassEnergy * 0.05})`;
+    context.lineWidth = 0.8 + reactive.substrateBreath * 1.8;
+    context.stroke();
+  }
+
+  context.restore();
+}
+
 function drawIdleSpores(context: CanvasRenderingContext2D, viewport: Viewport, time: number) {
   const { width, height } = viewport;
   context.save();
@@ -162,6 +224,8 @@ function drawHyphalEdge(
   seed: number,
   time: number,
   anastomosisRate: number,
+  voltageIntensity: number,
+  revealProgress: number,
   reducedMotion: boolean
 ) {
   const dx = targetPoint.x - sourcePoint.x;
@@ -175,11 +239,19 @@ function drawHyphalEdge(
   const controlY = sourcePoint.y + dy * 0.52 + normalY * curvature * (seed > 0.5 ? 1 : -1);
   const morphology = target.morphology === "Balanced" ? source.morphology : target.morphology;
   const fusedBoost = edge.fused ? 0.28 + anastomosisRate * 0.36 : 0;
-  const baseAlpha = Math.min(0.82, 0.26 + edge.conductivity * 0.26 + fusedBoost);
+  const reveal = computeEdgeReveal(edge.age, revealProgress);
+  const baseAlpha = Math.min(0.82, 0.26 + edge.conductivity * 0.26 + fusedBoost) * reveal;
   const lineWidth = Math.max(
     morphology === "AM" ? 0.55 : 0.9,
     edge.thickness * (morphology === "ECM" ? 12 : morphology === "AM" ? 5.5 : 8)
-  );
+  ) * (0.32 + reveal * 0.68);
+  const travelPulse = computeTravelPulse({
+    conductivity: edge.conductivity,
+    edgeSeed: seed,
+    reducedMotion,
+    timeMs: time,
+    voltageIntensity,
+  });
 
   context.save();
   context.lineCap = "round";
@@ -189,7 +261,7 @@ function drawHyphalEdge(
     context.beginPath();
     context.moveTo(sourcePoint.x, sourcePoint.y);
     context.quadraticCurveTo(controlX, controlY, targetPoint.x, targetPoint.y);
-    context.strokeStyle = `rgba(126, 255, 218, ${0.12 + fusedBoost * 0.5})`;
+    context.strokeStyle = `rgba(126, 255, 218, ${(0.12 + fusedBoost * 0.5) * reveal})`;
     context.lineWidth = lineWidth + 7 * Math.max(anastomosisRate, edge.fused ? 0.75 : 0);
     context.shadowColor = "rgba(92, 231, 255, 0.5)";
     context.shadowBlur = 18;
@@ -215,6 +287,30 @@ function drawHyphalEdge(
     context.stroke();
   }
 
+  if (travelPulse > 0.025 && reveal > 0.35) {
+    const head = reducedMotion ? 0.62 : (time * 0.0014 + seed) % 1;
+    const tail = Math.max(0, head - 0.09);
+    context.beginPath();
+    for (let index = 0; index <= 5; index += 1) {
+      const t = tail + (head - tail) * (index / 5);
+      const oneMinusT = 1 - t;
+      const x =
+        oneMinusT * oneMinusT * sourcePoint.x + 2 * oneMinusT * t * controlX + t * t * targetPoint.x;
+      const y =
+        oneMinusT * oneMinusT * sourcePoint.y + 2 * oneMinusT * t * controlY + t * t * targetPoint.y;
+      if (index === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    }
+    context.strokeStyle = `rgba(212, 255, 248, ${0.16 + travelPulse * 0.58})`;
+    context.lineWidth = lineWidth + 0.8 + travelPulse * 2.2;
+    context.shadowColor = "rgba(92, 231, 255, 0.84)";
+    context.shadowBlur = 10 + travelPulse * 22;
+    context.stroke();
+  }
+
   context.restore();
 }
 
@@ -225,23 +321,24 @@ function drawNode(
   seed: number,
   time: number,
   voltageIntensity: number,
+  reveal: number,
   reducedMotion: boolean
 ) {
   const pulse = reducedMotion ? 0.5 : Math.sin(time * 0.004 + seed * 10) * 0.5 + 0.5;
-  const radius = Math.max(1.35, node.radius * 120);
+  const radius = Math.max(1.35, node.radius * 120) * (0.45 + reveal * 0.55);
   const chargeRadius = radius + node.charge * (8 + voltageIntensity * 14) + pulse * voltageIntensity * 4;
 
   context.save();
   context.beginPath();
   context.arc(point.x, point.y, chargeRadius, 0, Math.PI * 2);
-  context.fillStyle = `rgba(92, 231, 255, ${node.charge * 0.12 + voltageIntensity * 0.09})`;
+  context.fillStyle = `rgba(92, 231, 255, ${(node.charge * 0.12 + voltageIntensity * 0.09) * reveal})`;
   context.shadowColor = "rgba(92, 231, 255, 0.58)";
   context.shadowBlur = 22 * Math.max(node.charge, voltageIntensity);
   context.fill();
 
   context.beginPath();
   context.arc(point.x, point.y, radius, 0, Math.PI * 2);
-  context.fillStyle = morphologyFill(node.morphology, 0.34 + node.charge * 0.44);
+  context.fillStyle = morphologyFill(node.morphology, (0.34 + node.charge * 0.44) * reveal);
   context.shadowColor = morphologyStroke(node.morphology, 0.52);
   context.shadowBlur = node.morphology === "ECM" ? 8 : 14;
   context.fill();
@@ -249,7 +346,7 @@ function drawNode(
   if (node.morphology === "ECM") {
     context.beginPath();
     context.arc(point.x, point.y, radius * 1.8, 0, Math.PI * 2);
-    context.strokeStyle = "rgba(215, 155, 98, 0.16)";
+    context.strokeStyle = `rgba(215, 155, 98, ${0.16 * reveal})`;
     context.lineWidth = Math.max(0.6, radius * 0.35);
     context.stroke();
   }
@@ -284,6 +381,8 @@ function drawSnapshot(
       edgeSeeds.get(edge.id) ?? 0,
       time,
       anastomosisRate,
+      voltageIntensity,
+      previousCache?.edgeSeeds.has(edge.id) ? progress : 0,
       reducedMotion
     );
   }
@@ -315,13 +414,51 @@ function drawSnapshot(
       nodeSeeds.get(node.id) ?? 0,
       time,
       voltageIntensity,
+      previousCache && !previousCache.nodesById.has(node.id) ? progress : 1,
       reducedMotion
     );
   }
 }
 
+function drawTransientSpores(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  reactive: ReactiveVisualState,
+  time: number,
+  reducedMotion: boolean
+) {
+  if (reactive.sparkIntensity <= 0.03) return;
+
+  const { width, height } = viewport;
+  const count = Math.round(6 + reactive.sparkIntensity * 18);
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  context.save();
+  context.globalCompositeOperation = "lighter";
+  context.shadowColor = "rgba(168, 255, 224, 0.62)";
+  context.shadowBlur = 8 + reactive.sparkIntensity * 12;
+
+  for (let index = 0; index < count; index += 1) {
+    const seed = index * 19.91;
+    const drift = reducedMotion ? 0 : time * 0.00045 * (index % 2 === 0 ? 1 : -1);
+    const angle = seed + drift;
+    const orbit = 90 + (index % 7) * 42 + reactive.trebleEnergy * 90;
+    const x = centerX + Math.cos(angle) * orbit + Math.sin(seed * 0.7) * width * 0.08;
+    const y = centerY + Math.sin(angle * 0.72) * orbit * 0.55 + Math.cos(seed) * height * 0.06;
+    const radius = 0.8 + (index % 3) * 0.45 + reactive.sparkIntensity * 1.4;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fillStyle = `rgba(210, 255, 248, ${0.08 + reactive.sparkIntensity * 0.22})`;
+    context.fill();
+  }
+
+  context.restore();
+}
+
 export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const audioRenderSnapshotRef = useRef<AudioRenderSnapshot>(readAudioRenderSnapshot());
   const snapshotCacheRef = useRef<SnapshotRenderCache | null>(null);
   const snapshotTransitionRef = useRef<SnapshotTransition | null>(null);
 
@@ -354,6 +491,16 @@ export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
       durationMs,
     };
   }, [snapshot]);
+
+  useEffect(() => {
+    return useAudioStore.subscribe((state) => {
+      audioRenderSnapshotRef.current = {
+        bands: state.bands,
+        pulses: state.pulses,
+        isActive: state.isPlaying || state.captureSource !== null,
+      };
+    });
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -403,7 +550,9 @@ export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
     const render = (time: number) => {
       const reducedMotion = motionQuery.matches;
       const renderTime = reducedMotion ? 0 : time;
+      const reactiveVisualState = deriveReactiveVisualState(audioRenderSnapshotRef.current);
       drawSubstrate(context, viewport, backgroundCanvas, pulseGradient, renderTime);
+      drawReactiveAudioField(context, viewport, reactiveVisualState, renderTime, reducedMotion);
 
       const currentTransition = snapshotTransitionRef.current;
       if (currentTransition) {
@@ -423,6 +572,7 @@ export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
       } else {
         drawIdleSpores(context, viewport, renderTime);
       }
+      drawTransientSpores(context, viewport, reactiveVisualState, renderTime, reducedMotion);
 
       animationFrame = window.requestAnimationFrame(render);
     };
