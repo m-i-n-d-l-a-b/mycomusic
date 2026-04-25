@@ -140,8 +140,8 @@ input[type="range"] {
 .background-vignette {
   z-index: 2;
   background:
-    linear-gradient(90deg, rgba(2, 6, 5, 0.76), transparent 28%, transparent 72%, rgba(2, 6, 5, 0.78)),
-    radial-gradient(circle at center, transparent 0 45%, rgba(0, 0, 0, 0.54) 100%);
+    linear-gradient(90deg, rgba(2, 6, 5, 0.42), transparent 20%, transparent 80%, rgba(2, 6, 5, 0.44)),
+    radial-gradient(circle at center, transparent 0 62%, rgba(0, 0, 0, 0.28) 100%);
 }
 
 .rhizosphere {
