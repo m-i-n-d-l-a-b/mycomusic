@@ -306,6 +306,14 @@ export function useAudioEngine() {
         return loadAudio(file);
       }
 
+      stopCurrentSource();
+      setIsPlaying(false);
+      setAudioBuffer(null);
+      setDuration(0);
+      setCurrentTime(0);
+      playbackOffsetRef.current = 0;
+      playbackStartTimeRef.current = 0;
+
       const arrayBuffer = await file.arrayBuffer();
       const decodedBuffer = await context.decodeAudioData(arrayBuffer);
 

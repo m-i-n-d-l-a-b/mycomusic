@@ -52,6 +52,14 @@ describe("MyceliumGraph", () => {
     }
   });
 
+  it("scales growth events with elapsed time instead of snapshot tick count", () => {
+    const graph = new MyceliumGraph({ seed: 7 });
+
+    graph.step(forces, 0.1);
+
+    expect(graph.snapshot().nodes.length).toBeGreaterThan(3);
+  });
+
   it("raises topology index when anastomosis creates fused graph edges", () => {
     const tree = new MyceliumGraph({ seed: 9 });
     const graph = new MyceliumGraph({ seed: 9 });

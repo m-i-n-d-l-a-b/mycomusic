@@ -12,6 +12,7 @@ interface InternalTip extends MycoTip {
 }
 
 const DEFAULT_MAX_NODES = 640;
+const BASELINE_GROWTH_FPS = 30;
 
 function createPrng(seed: number): () => number {
   let state = seed >>> 0;
@@ -36,6 +37,7 @@ export class MyceliumGraph {
   private edges: MycoEdge[] = [];
   private tips: InternalTip[] = [];
   private tick = 0;
+  private growthBudget = 0;
   private lastForces: MycoForces = {
     amplitude: 0,
     growthPressure: 0,
@@ -65,7 +67,7 @@ export class MyceliumGraph {
     this.ageEdges(deltaSec);
 
     const startingNodeCount = this.nodes.length;
-    const growthEvents = this.computeGrowthEvents(forces);
+    const growthEvents = this.computeGrowthEvents(forces, deltaSec);
 
     for (let i = 0; i < growthEvents && this.nodes.length < this.maxNodes; i++) {
       const tip = this.selectTip();
@@ -112,9 +114,21 @@ export class MyceliumGraph {
     ];
   }
 
-  private computeGrowthEvents(forces: MycoForces): number {
-    if (forces.growthPressure <= 0.03 && forces.pulse <= 0.03) return 0;
-    return Math.max(1, Math.min(8, Math.ceil(forces.growthPressure * Math.max(1, this.tips.length))));
+  private computeGrowthEvents(forces: MycoForces, deltaSec: number): number {
+    if (forces.growthPressure <= 0.03 && forces.pulse <= 0.03) {
+      this.growthBudget = 0;
+      return 0;
+    }
+
+    const eventsAtBaselineFps = Math.max(
+      1,
+      Math.min(8, Math.ceil(forces.growthPressure * Math.max(1, this.tips.length)))
+    );
+    this.growthBudget += eventsAtBaselineFps * deltaSec * BASELINE_GROWTH_FPS;
+    const events = Math.floor(this.growthBudget);
+    this.growthBudget -= events;
+
+    return events;
   }
 
   private selectTip(): InternalTip | undefined {

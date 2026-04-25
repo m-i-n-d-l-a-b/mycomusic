@@ -18,6 +18,8 @@ interface UseMycoSocketResult {
 }
 
 const FEATURE_FRAME_INTERVAL_MS = 1_000 / 30;
+const INITIAL_RECONNECT_DELAY_MS = 500;
+const MAX_RECONNECT_DELAY_MS = 5_000;
 
 function getWebSocketUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -31,47 +33,105 @@ function getAudioSourceKind(): AudioSourceKind {
   return "input";
 }
 
+function parseServerMessage(data: unknown): MycoServerMessage | null {
+  try {
+    const message = JSON.parse(String(data)) as Partial<MycoServerMessage>;
+    if (
+      message.type === "myco.ready" ||
+      message.type === "myco.snapshot" ||
+      message.type === "myco.telemetry" ||
+      message.type === "myco.error"
+    ) {
+      return message as MycoServerMessage;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 export function useMycoSocket(): UseMycoSocketResult {
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [snapshot, setSnapshot] = useState<MycoSnapshotMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
   const wsRef = useRef<WebSocket | null>(null);
-  const sessionIdRef = useRef(crypto.randomUUID());
+  const sessionIdRef = useRef(sessionId);
   const lastSentAtRef = useRef(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
 
   useEffect(() => {
-    const ws = new WebSocket(getWebSocketUrl());
-    wsRef.current = ws;
-    setConnectionState("connecting");
+    let disposed = false;
 
-    ws.addEventListener("open", () => {
-      setConnectionState("open");
-      setError(null);
-    });
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimerRef.current !== null) return;
+      const delay = Math.min(
+        MAX_RECONNECT_DELAY_MS,
+        INITIAL_RECONNECT_DELAY_MS * 2 ** reconnectAttemptRef.current
+      );
+      reconnectAttemptRef.current += 1;
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        connect();
+      }, delay);
+    };
 
-    ws.addEventListener("close", () => {
-      setConnectionState("closed");
-    });
+    const connect = () => {
+      if (disposed) return;
 
-    ws.addEventListener("error", () => {
-      setConnectionState("error");
-      setError("WebSocket connection failed");
-    });
+      const ws = new WebSocket(getWebSocketUrl());
+      wsRef.current = ws;
+      setConnectionState("connecting");
 
-    ws.addEventListener("message", (event) => {
-      const message = JSON.parse(String(event.data)) as MycoServerMessage;
-      if (message.type === "myco.snapshot") {
-        setSnapshot(message);
-        return;
-      }
-      if (message.type === "myco.error") {
-        const mycoError = message as MycoErrorMessage;
-        setError(mycoError.message);
-      }
-    });
+      ws.addEventListener("open", () => {
+        reconnectAttemptRef.current = 0;
+        setConnectionState("open");
+        setError(null);
+      });
+
+      ws.addEventListener("close", () => {
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
+        setConnectionState("closed");
+        scheduleReconnect();
+      });
+
+      ws.addEventListener("error", () => {
+        setConnectionState("error");
+        setError("WebSocket connection failed");
+      });
+
+      ws.addEventListener("message", (event) => {
+        const message = parseServerMessage(event.data);
+        if (!message) {
+          setError("Received malformed WebSocket message");
+          return;
+        }
+
+        if (message.type === "myco.ready") {
+          sessionIdRef.current = message.sessionId;
+          setSessionId(message.sessionId);
+          return;
+        }
+        if (message.type === "myco.snapshot") {
+          setSnapshot(message);
+          return;
+        }
+        if (message.type === "myco.error") {
+          const mycoError = message as MycoErrorMessage;
+          setError(mycoError.message);
+        }
+      });
+    };
+
+    connect();
 
     const unsubscribe = useAudioStore.subscribe((state) => {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (!(state.isPlaying || state.captureSource)) return;
 
       const now = performance.now();
@@ -92,8 +152,13 @@ export function useMycoSocket(): UseMycoSocketResult {
     });
 
     return () => {
+      disposed = true;
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       unsubscribe();
-      ws.close();
+      wsRef.current?.close();
       wsRef.current = null;
     };
   }, []);
@@ -102,6 +167,6 @@ export function useMycoSocket(): UseMycoSocketResult {
     connectionState,
     snapshot,
     error,
-    sessionId: sessionIdRef.current,
+    sessionId,
   };
 }

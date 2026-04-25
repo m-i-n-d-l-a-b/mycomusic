@@ -38,6 +38,33 @@ function waitForMessage(ws: WebSocket, type: string): Promise<unknown> {
   });
 }
 
+function waitForErrorCode(ws: WebSocket, code: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${code}`)), 2_000);
+    ws.on("message", (raw) => {
+      const parsed = JSON.parse(String(raw));
+      if (parsed.type === "myco.error" && parsed.code === code) {
+        clearTimeout(timer);
+        resolve(parsed);
+      }
+    });
+  });
+}
+
+function waitForClose(ws: WebSocket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Timed out waiting for close")), 2_000);
+    ws.on("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    ws.on("error", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
 afterEach(async () => {
   if (server) {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
@@ -107,6 +134,39 @@ describe("attachMycoGateway", () => {
     });
 
     ws.close();
+    await gateway.close();
+  });
+
+  it("rate limits malformed message floods before parsing", async () => {
+    const gateway = await startGateway();
+    const ws = new WebSocket(gateway.url);
+
+    await waitForMessage(ws, "myco.ready");
+    const rateLimitPromise = waitForErrorCode(ws, "RATE_LIMITED");
+
+    for (let i = 0; i < 40; i += 1) {
+      ws.send("{");
+    }
+
+    const error = await rateLimitPromise;
+    expect(error).toMatchObject({
+      type: "myco.error",
+      code: "RATE_LIMITED",
+    });
+
+    ws.close();
+    await gateway.close();
+  });
+
+  it("closes clients that exceed the gateway payload limit", async () => {
+    const gateway = await startGateway();
+    const ws = new WebSocket(gateway.url);
+
+    await waitForMessage(ws, "myco.ready");
+    const closePromise = waitForClose(ws);
+    ws.send("x".repeat(20_000));
+
+    await closePromise;
     await gateway.close();
   });
 });
