@@ -34,10 +34,13 @@ export class MyceliumGraph {
   private readonly rand: () => number;
   private readonly maxNodes: number;
   private nodes: MycoNode[] = [];
+  private nodesById = new Map<string, MycoNode>();
   private edges: MycoEdge[] = [];
+  private adjacency = new Map<string, MycoEdge[]>();
   private tips: InternalTip[] = [];
   private tick = 0;
   private growthBudget = 0;
+  private fusedEdgeCount = 0;
   private lastForces: MycoForces = {
     amplitude: 0,
     growthPressure: 0,
@@ -107,11 +110,27 @@ export class MyceliumGraph {
     };
 
     this.nodes = [root];
+    this.nodesById = new Map([[root.id, root]]);
     this.edges = [];
+    this.adjacency = new Map([[root.id, []]]);
+    this.fusedEdgeCount = 0;
     this.tips = [
       { id: "tip-0", nodeId: root.id, angle: -0.15, energy: 1, age: 0 },
       { id: "tip-1", nodeId: root.id, angle: Math.PI + 0.15, energy: 1, age: 0 },
     ];
+  }
+
+  private addEdge(edge: MycoEdge): void {
+    this.edges.push(edge);
+    if (edge.fused) this.fusedEdgeCount += 1;
+
+    const sourceEdges = this.adjacency.get(edge.source) ?? [];
+    sourceEdges.push(edge);
+    this.adjacency.set(edge.source, sourceEdges);
+
+    const targetEdges = this.adjacency.get(edge.target) ?? [];
+    targetEdges.push(edge);
+    this.adjacency.set(edge.target, targetEdges);
   }
 
   private computeGrowthEvents(forces: MycoForces, deltaSec: number): number {
@@ -139,7 +158,7 @@ export class MyceliumGraph {
   }
 
   private extendTip(tip: InternalTip, forces: MycoForces, deltaSec: number): void {
-    const source = this.nodes.find((node) => node.id === tip.nodeId);
+    const source = this.nodesById.get(tip.nodeId);
     if (!source) return;
 
     tip.age += deltaSec;
@@ -158,7 +177,9 @@ export class MyceliumGraph {
     };
 
     this.nodes.push(node);
-    this.edges.push({
+    this.nodesById.set(node.id, node);
+    this.adjacency.set(node.id, []);
+    this.addEdge({
       id: `edge-${this.edges.length}`,
       source: source.id,
       target: node.id,
@@ -198,17 +219,14 @@ export class MyceliumGraph {
     const probability = clamp(forces.anastomosisRate * (0.18 + forces.harmony * 0.32));
     if (this.rand() > probability) return;
 
-    const candidates = this.nodes.filter((candidate) => candidate.id !== node.id && candidate.id !== sourceId);
-    const nearest = candidates
-      .map((candidate) => ({ node: candidate, distance: distance(node, candidate) }))
-      .sort((a, b) => a.distance - b.distance)[Math.floor(this.rand() * Math.min(candidates.length, 5))];
+    const nearest = this.findAnastomosisCandidate(node, sourceId);
 
     if (!nearest) return;
 
-    this.edges.push({
+    this.addEdge({
       id: `edge-${this.edges.length}`,
       source: node.id,
-      target: nearest.node.id,
+      target: nearest.id,
       thickness: Math.max(0.12, forces.edgeThickness * 0.8),
       conductivity: clamp(0.45 + forces.harmony * 0.5),
       age: 0,
@@ -216,22 +234,51 @@ export class MyceliumGraph {
     });
   }
 
+  private findAnastomosisCandidate(node: MycoNode, sourceId: string): MycoNode | undefined {
+    const nearest: { node: MycoNode; distance: number }[] = [];
+
+    for (const candidate of this.nodes) {
+      if (candidate.id === node.id || candidate.id === sourceId) continue;
+
+      const candidateDistance = distance(node, candidate);
+      if (nearest.length < 5) {
+        nearest.push({ node: candidate, distance: candidateDistance });
+        continue;
+      }
+
+      let farthestIndex = 0;
+      for (let index = 1; index < nearest.length; index += 1) {
+        if (nearest[index].distance > nearest[farthestIndex].distance) {
+          farthestIndex = index;
+        }
+      }
+
+      if (candidateDistance < nearest[farthestIndex].distance) {
+        nearest[farthestIndex] = { node: candidate, distance: candidateDistance };
+      }
+    }
+
+    return nearest[Math.floor(this.rand() * nearest.length)]?.node;
+  }
+
   private applySpikeCascade(nodeId: string, forces: MycoForces): void {
     if (forces.pulse <= 0.02) return;
 
     const touched = new Set<string>([nodeId]);
     const frontier = [{ nodeId, charge: forces.pulse }];
+    let frontierIndex = 0;
 
-    while (frontier.length > 0) {
-      const current = frontier.shift();
+    while (frontierIndex < frontier.length) {
+      const current = frontier[frontierIndex];
+      frontierIndex += 1;
       if (!current || current.charge < 0.08) continue;
 
-      const node = this.nodes.find((candidate) => candidate.id === current.nodeId);
+      const node = this.nodesById.get(current.nodeId);
       if (node) {
         node.charge = Math.max(node.charge, current.charge);
       }
 
-      for (const edge of this.edges) {
+      for (const edge of this.adjacency.get(current.nodeId) ?? []) {
         const nextId =
           edge.source === current.nodeId ? edge.target : edge.target === current.nodeId ? edge.source : null;
         if (!nextId || touched.has(nextId)) continue;
@@ -255,7 +302,6 @@ export class MyceliumGraph {
   }
 
   private computeTopologyIndex(): number {
-    const fusedEdges = this.edges.filter((edge) => edge.fused).length;
-    return clamp((fusedEdges / Math.max(1, this.nodes.length - 1)) * 1.6);
+    return clamp((this.fusedEdgeCount / Math.max(1, this.nodes.length - 1)) * 1.6);
   }
 }

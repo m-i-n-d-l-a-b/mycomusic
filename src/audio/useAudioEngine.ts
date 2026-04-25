@@ -6,6 +6,7 @@ import { useFrequencyAnalyzer } from "./useFrequencyAnalyzer";
 
 const SILENCE_THRESHOLD = 8; // Max freq value (0–255) below which we consider silence
 const SILENCE_STOP_SECONDS = 15; // Seconds of consecutive silence before auto-stopping
+const AUDIO_FEATURE_COMMIT_INTERVAL_MS = 1_000 / 30;
 
 function createSilenceDetector(params: {
   analyser: AnalyserNode;
@@ -15,7 +16,6 @@ function createSilenceDetector(params: {
   onSilence: () => void;
 }) {
   const { analyser, audioTrack, analyserNodeRef, intervalRef, onSilence } = params;
-  const timeDomain = new Uint8Array(analyser.fftSize);
   const freqDomain = new Uint8Array(analyser.frequencyBinCount);
   let silenceStart: number | null = null;
 
@@ -26,9 +26,11 @@ function createSilenceDetector(params: {
       return;
     }
     analyser.getByteFrequencyData(freqDomain);
-    analyser.getByteTimeDomainData(timeDomain);
 
-    const maxFreq = Math.max(...freqDomain);
+    let maxFreq = 0;
+    for (let index = 0; index < freqDomain.length; index += 1) {
+      if (freqDomain[index] > maxFreq) maxFreq = freqDomain[index];
+    }
     if (maxFreq > SILENCE_THRESHOLD) {
       silenceStart = null;
     } else {
@@ -46,28 +48,26 @@ function createSilenceDetector(params: {
  * Custom hook managing Web Audio API setup, MP3 decoding, and playback
  */
 export function useAudioEngine() {
-  const {
-    audioBuffer,
-    audioContext,
-    analyserNode,
-    mediaStream,
-    isPlaying,
-    captureSource,
-    gainMultiplier,
-    setAudioBuffer,
-    setAudioContext,
-    setSourceNode,
-    setAnalyserNode,
-    setMediaStream,
-    setRecordingStream,
-    setIsPlaying,
-    setCurrentTime,
-    setDuration,
-    updateFrequencyData,
-    setError,
-    setIsLoading,
-    setCaptureSource,
-  } = useAudioStore();
+  const audioBuffer = useAudioStore((state) => state.audioBuffer);
+  const audioContext = useAudioStore((state) => state.audioContext);
+  const analyserNode = useAudioStore((state) => state.analyserNode);
+  const mediaStream = useAudioStore((state) => state.mediaStream);
+  const isPlaying = useAudioStore((state) => state.isPlaying);
+  const captureSource = useAudioStore((state) => state.captureSource);
+  const gainMultiplier = useAudioStore((state) => state.gainMultiplier);
+  const setAudioBuffer = useAudioStore((state) => state.setAudioBuffer);
+  const setAudioContext = useAudioStore((state) => state.setAudioContext);
+  const setSourceNode = useAudioStore((state) => state.setSourceNode);
+  const setAnalyserNode = useAudioStore((state) => state.setAnalyserNode);
+  const setMediaStream = useAudioStore((state) => state.setMediaStream);
+  const setRecordingStream = useAudioStore((state) => state.setRecordingStream);
+  const setIsPlaying = useAudioStore((state) => state.setIsPlaying);
+  const setCurrentTime = useAudioStore((state) => state.setCurrentTime);
+  const setDuration = useAudioStore((state) => state.setDuration);
+  const updateFrequencyData = useAudioStore((state) => state.updateFrequencyData);
+  const setError = useAudioStore((state) => state.setError);
+  const setIsLoading = useAudioStore((state) => state.setIsLoading);
+  const setCaptureSource = useAudioStore((state) => state.setCaptureSource);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<AudioSourceNode | null>(null);
@@ -248,6 +248,7 @@ export function useAudioEngine() {
     enabled: !!analyserNode && (isPlaying || captureSource !== null),
     onUpdate: updateFrequencyData,
     gainMultiplier,
+    minUpdateIntervalMs: AUDIO_FEATURE_COMMIT_INTERVAL_MS,
   });
 
   // Update current time during playback

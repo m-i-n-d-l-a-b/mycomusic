@@ -39,8 +39,38 @@ describe("mycoProtocol", () => {
       expect(parsed.message.bands.subBass).toBe(1);
       expect(parsed.message.bands.air).toBe(0);
       expect(parsed.message.pulses.air).toBe(1);
-      expect(parsed.message.frequencyData.air).toBe(1);
+      expect(parsed.message.frequencyData?.air).toBe(1);
     }
+  });
+
+  it("accepts compact feature frames without legacy frequency data", () => {
+    const parsed = parseClientMessage({
+      type: "audio.feature",
+      sessionId: "session-compact",
+      timestamp: 123,
+      bands: {
+        subBass: 0.2,
+        midBass: 0.2,
+        upperBass: 0.2,
+        lowMids: 0.2,
+        mids: 0.2,
+        upperMids: 0.2,
+        presence: 0.2,
+        air: 0.2,
+      },
+      pulses: {
+        subBass: 0,
+        midBass: 0,
+        upperBass: 0,
+        lowMids: 0,
+        mids: 0,
+        upperMids: 0,
+        presence: 0,
+        air: 0,
+      },
+    });
+
+    expect(parsed.success).toBe(true);
   });
 
   it("rejects malformed client messages", () => {

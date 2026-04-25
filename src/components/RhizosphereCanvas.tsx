@@ -10,7 +10,23 @@ interface Viewport {
   height: number;
 }
 
+interface SnapshotRenderCache {
+  snapshot: MycoSnapshotMessage;
+  nodesById: Map<string, MycoNode>;
+  nodeSeeds: Map<string, number>;
+  edgeSeeds: Map<string, number>;
+}
+
+interface SnapshotTransition {
+  from: SnapshotRenderCache | null;
+  to: SnapshotRenderCache;
+  startTime: number;
+  durationMs: number;
+}
+
 const VIEWPORT_PROJECTION_SCALE = 1.15;
+const MAX_CANVAS_DPR = 2;
+const MAX_SNAPSHOT_INTERPOLATION_MS = 120;
 
 function projectPoint(node: Pick<MycoNode, "x" | "y">, viewport: Viewport): { x: number; y: number } {
   const scale = Math.min(viewport.width, viewport.height, 900) * VIEWPORT_PROJECTION_SCALE;
@@ -18,6 +34,26 @@ function projectPoint(node: Pick<MycoNode, "x" | "y">, viewport: Viewport): { x:
     x: viewport.width / 2 + node.x * scale,
     y: viewport.height / 2 + node.y * scale,
   };
+}
+
+function projectInterpolatedPoint(
+  node: MycoNode,
+  previousCache: SnapshotRenderCache | null,
+  progress: number,
+  viewport: Viewport
+): { x: number; y: number } {
+  if (!(previousCache && progress < 1)) return projectPoint(node, viewport);
+
+  const previousNode = previousCache.nodesById.get(node.id);
+  if (!previousNode) return projectPoint(node, viewport);
+
+  return projectPoint(
+    {
+      x: previousNode.x + (node.x - previousNode.x) * progress,
+      y: previousNode.y + (node.y - previousNode.y) * progress,
+    },
+    viewport
+  );
 }
 
 function hashString(value: string): number {
@@ -41,13 +77,11 @@ function morphologyFill(morphology: Morphology, alpha: number): string {
   return `rgba(178, 255, 218, ${alpha})`;
 }
 
-function drawSubstrate(context: CanvasRenderingContext2D, viewport: Viewport, time: number) {
+function drawStaticSubstrate(context: CanvasRenderingContext2D, viewport: Viewport) {
   const { width, height } = viewport;
-  context.clearRect(0, 0, width, height);
   context.fillStyle = "#020605";
   context.fillRect(0, 0, width, height);
 
-  const pulse = 0.04 + Math.sin(time * 0.0005) * 0.015;
   const gradient = context.createRadialGradient(
     width / 2,
     height / 2,
@@ -56,7 +90,7 @@ function drawSubstrate(context: CanvasRenderingContext2D, viewport: Viewport, ti
     height / 2,
     Math.max(width, height) * 0.72
   );
-  gradient.addColorStop(0, `rgba(96, 255, 176, ${0.1 + pulse})`);
+  gradient.addColorStop(0, "rgba(96, 255, 176, 0.14)");
   gradient.addColorStop(0.42, "rgba(7, 34, 24, 0.52)");
   gradient.addColorStop(1, "rgba(2, 6, 5, 0.98)");
   context.fillStyle = gradient;
@@ -68,11 +102,32 @@ function drawSubstrate(context: CanvasRenderingContext2D, viewport: Viewport, ti
   context.lineWidth = 1;
   for (let x = -40; x < width + 40; x += 54) {
     context.beginPath();
-    context.moveTo(x + Math.sin(time * 0.00015 + x) * 4, 0);
+    context.moveTo(x + Math.sin(x) * 4, 0);
     context.lineTo(x - 90, height);
     context.stroke();
   }
   context.restore();
+}
+
+function drawSubstrate(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  backgroundCanvas: HTMLCanvasElement,
+  pulseGradient: CanvasGradient | null,
+  time: number
+) {
+  const { width, height } = viewport;
+  context.clearRect(0, 0, width, height);
+  context.drawImage(backgroundCanvas, 0, 0, width, height);
+
+  if (pulseGradient) {
+    context.save();
+    context.globalCompositeOperation = "lighter";
+    context.globalAlpha = 0.035 + Math.sin(time * 0.0005) * 0.014;
+    context.fillStyle = pulseGradient;
+    context.fillRect(0, 0, width, height);
+    context.restore();
+  }
 }
 
 function drawIdleSpores(context: CanvasRenderingContext2D, viewport: Viewport, time: number) {
@@ -102,19 +157,18 @@ function drawHyphalEdge(
   edge: MycoEdge,
   source: MycoNode,
   target: MycoNode,
-  viewport: Viewport,
+  sourcePoint: { x: number; y: number },
+  targetPoint: { x: number; y: number },
+  seed: number,
   time: number,
   anastomosisRate: number,
   reducedMotion: boolean
 ) {
-  const sourcePoint = projectPoint(source, viewport);
-  const targetPoint = projectPoint(target, viewport);
   const dx = targetPoint.x - sourcePoint.x;
   const dy = targetPoint.y - sourcePoint.y;
   const distance = Math.hypot(dx, dy) || 1;
   const normalX = -dy / distance;
   const normalY = dx / distance;
-  const seed = hashString(edge.id);
   const sway = reducedMotion ? 0 : Math.sin(time * 0.0012 + seed * 12) * 0.5 + 0.5;
   const curvature = (0.08 + seed * 0.18 + sway * 0.12) * Math.min(distance, 180);
   const controlX = sourcePoint.x + dx * 0.52 + normalX * curvature * (seed > 0.5 ? 1 : -1);
@@ -167,13 +221,13 @@ function drawHyphalEdge(
 function drawNode(
   context: CanvasRenderingContext2D,
   node: MycoNode,
-  viewport: Viewport,
+  point: { x: number; y: number },
+  seed: number,
   time: number,
   voltageIntensity: number,
   reducedMotion: boolean
 ) {
-  const point = projectPoint(node, viewport);
-  const pulse = reducedMotion ? 0.5 : Math.sin(time * 0.004 + hashString(node.id) * 10) * 0.5 + 0.5;
+  const pulse = reducedMotion ? 0.5 : Math.sin(time * 0.004 + seed * 10) * 0.5 + 0.5;
   const radius = Math.max(1.35, node.radius * 120);
   const chargeRadius = radius + node.charge * (8 + voltageIntensity * 14) + pulse * voltageIntensity * 4;
 
@@ -205,12 +259,14 @@ function drawNode(
 
 function drawSnapshot(
   context: CanvasRenderingContext2D,
-  snapshot: MycoSnapshotMessage,
+  cache: SnapshotRenderCache,
+  previousCache: SnapshotRenderCache | null,
+  progress: number,
   viewport: Viewport,
   time: number,
   reducedMotion: boolean
 ) {
-  const nodesById = new Map(snapshot.nodes.map((node) => [node.id, node]));
+  const { snapshot, nodesById, nodeSeeds, edgeSeeds } = cache;
   const voltageIntensity = Math.min(1, snapshot.telemetry.bioVoltageMv / 2.1);
   const anastomosisRate = snapshot.telemetry.anastomosisRate;
 
@@ -218,13 +274,24 @@ function drawSnapshot(
     const source = nodesById.get(edge.source);
     const target = nodesById.get(edge.target);
     if (!(source && target)) continue;
-    drawHyphalEdge(context, edge, source, target, viewport, time, anastomosisRate, reducedMotion);
+    drawHyphalEdge(
+      context,
+      edge,
+      source,
+      target,
+      projectInterpolatedPoint(source, previousCache, progress, viewport),
+      projectInterpolatedPoint(target, previousCache, progress, viewport),
+      edgeSeeds.get(edge.id) ?? 0,
+      time,
+      anastomosisRate,
+      reducedMotion
+    );
   }
 
   for (const tip of snapshot.tips) {
     const node = nodesById.get(tip.nodeId);
     if (!node) continue;
-    const point = projectPoint(node, viewport);
+    const point = projectInterpolatedPoint(node, previousCache, progress, viewport);
     const length = 8 + tip.energy * 18;
     context.save();
     context.translate(point.x, point.y);
@@ -241,16 +308,51 @@ function drawSnapshot(
   }
 
   for (const node of snapshot.nodes) {
-    drawNode(context, node, viewport, time, voltageIntensity, reducedMotion);
+    drawNode(
+      context,
+      node,
+      projectInterpolatedPoint(node, previousCache, progress, viewport),
+      nodeSeeds.get(node.id) ?? 0,
+      time,
+      voltageIntensity,
+      reducedMotion
+    );
   }
 }
 
 export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const snapshotRef = useRef<MycoSnapshotMessage | null>(snapshot);
+  const snapshotCacheRef = useRef<SnapshotRenderCache | null>(null);
+  const snapshotTransitionRef = useRef<SnapshotTransition | null>(null);
 
   useEffect(() => {
-    snapshotRef.current = snapshot;
+    if (!snapshot) {
+      snapshotCacheRef.current = null;
+      snapshotTransitionRef.current = null;
+      return;
+    }
+
+    const previousCache = snapshotCacheRef.current;
+    const nextCache: SnapshotRenderCache = {
+      snapshot,
+      nodesById: new Map(snapshot.nodes.map((node) => [node.id, node])),
+      nodeSeeds: new Map(snapshot.nodes.map((node) => [node.id, hashString(node.id)])),
+      edgeSeeds: new Map(snapshot.edges.map((edge) => [edge.id, hashString(edge.id)])),
+    };
+    const durationMs = previousCache
+      ? Math.min(
+          MAX_SNAPSHOT_INTERPOLATION_MS,
+          Math.max(1_000 / 30, snapshot.timestamp - previousCache.snapshot.timestamp)
+        )
+      : 0;
+
+    snapshotCacheRef.current = nextCache;
+    snapshotTransitionRef.current = {
+      from: previousCache,
+      to: nextCache,
+      startTime: performance.now(),
+      durationMs,
+    };
   }, [snapshot]);
 
   useEffect(() => {
@@ -263,25 +365,61 @@ export function RhizosphereCanvas({ snapshot }: RhizosphereCanvasProps) {
     let animationFrame = 0;
     const viewport: Viewport = { width: 0, height: 0 };
     const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const backgroundCanvas = document.createElement("canvas");
+    const backgroundContext = backgroundCanvas.getContext("2d");
+    let pulseGradient: CanvasGradient | null = null;
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, MAX_CANVAS_DPR);
       viewport.width = rect.width;
       viewport.height = rect.height;
       canvas.width = Math.floor(rect.width * dpr);
       canvas.height = Math.floor(rect.height * dpr);
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      context.imageSmoothingEnabled = true;
+
+      backgroundCanvas.width = Math.floor(rect.width * dpr);
+      backgroundCanvas.height = Math.floor(rect.height * dpr);
+      if (backgroundContext) {
+        backgroundContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+        backgroundContext.clearRect(0, 0, viewport.width, viewport.height);
+        drawStaticSubstrate(backgroundContext, viewport);
+      }
+
+      pulseGradient = context.createRadialGradient(
+        viewport.width / 2,
+        viewport.height / 2,
+        12,
+        viewport.width / 2,
+        viewport.height / 2,
+        Math.max(viewport.width, viewport.height) * 0.55
+      );
+      pulseGradient.addColorStop(0, "rgba(96, 255, 176, 1)");
+      pulseGradient.addColorStop(0.45, "rgba(7, 34, 24, 0.32)");
+      pulseGradient.addColorStop(1, "rgba(2, 6, 5, 0)");
     };
 
     const render = (time: number) => {
       const reducedMotion = motionQuery.matches;
       const renderTime = reducedMotion ? 0 : time;
-      drawSubstrate(context, viewport, renderTime);
+      drawSubstrate(context, viewport, backgroundCanvas, pulseGradient, renderTime);
 
-      const currentSnapshot = snapshotRef.current;
-      if (currentSnapshot) {
-        drawSnapshot(context, currentSnapshot, viewport, renderTime, reducedMotion);
+      const currentTransition = snapshotTransitionRef.current;
+      if (currentTransition) {
+        const progress =
+          currentTransition.durationMs <= 0
+            ? 1
+            : Math.min(1, (performance.now() - currentTransition.startTime) / currentTransition.durationMs);
+        drawSnapshot(
+          context,
+          currentTransition.to,
+          currentTransition.from,
+          progress,
+          viewport,
+          renderTime,
+          reducedMotion
+        );
       } else {
         drawIdleSpores(context, viewport, renderTime);
       }

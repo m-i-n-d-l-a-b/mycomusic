@@ -15,6 +15,7 @@ interface UseFrequencyAnalyzerOptions {
   onUpdate: (data: ReactiveAudioData) => void;
   gateConfig?: Partial<GateConfig>;
   gainMultiplier?: number; // Manual gain adjustment (0.1 to 3.0)
+  minUpdateIntervalMs?: number;
 }
 
 const DEFAULT_GATE_CONFIG: GateConfig = {
@@ -32,6 +33,14 @@ const NORM_CLAMP_MAX = 3.0;
 const PEAK_HISTORY_FRAMES = 60;
 
 const BAND_IDS = BAND_DEFINITIONS.map((b) => b.id) as (keyof Bands8)[];
+
+interface NormalizationBandState {
+  peakHistory: number[];
+  peakSum: number;
+  historyIndex: number;
+  historyCount: number;
+  factor: number;
+}
 
 function createEmptyBands8(): Bands8 {
   return {
@@ -57,10 +66,13 @@ function resetBandState(target: Record<keyof Bands8, number>): void {
 }
 
 function resetNormalizationState(
-  target: Record<keyof Bands8, { peakHistory: number[]; factor: number }>
+  target: Record<keyof Bands8, NormalizationBandState>
 ): void {
   for (const id of BAND_IDS) {
-    target[id].peakHistory = [];
+    target[id].peakHistory.fill(0);
+    target[id].peakSum = 0;
+    target[id].historyIndex = 0;
+    target[id].historyCount = 0;
     target[id].factor = 1.0;
   }
 }
@@ -76,10 +88,12 @@ export function useFrequencyAnalyzer({
   onUpdate,
   gateConfig = {},
   gainMultiplier = 1.0,
+  minUpdateIntervalMs = 0,
 }: UseFrequencyAnalyzerOptions) {
   const animationFrameRef = useRef<number | null>(null);
   const dataArrayRef = useRef<Uint8Array | undefined>(undefined);
   const lastFrameTimeRef = useRef<number>(0);
+  const lastUpdateAtRef = useRef<number>(0);
 
   const onUpdateRef = useRef(onUpdate);
   const gateConfigRef = useRef(gateConfig);
@@ -100,17 +114,39 @@ export function useFrequencyAnalyzer({
   const prevRawRef = useRef<Record<BandId, number>>(
     Object.fromEntries(BAND_IDS.map((id) => [id, 0])) as Record<BandId, number>
   );
-  const normStateRef = useRef<Record<BandId, { peakHistory: number[]; factor: number }>>(
+  const normStateRef = useRef<Record<BandId, NormalizationBandState>>(
     Object.fromEntries(
-      BAND_IDS.map((id) => [id, { peakHistory: [] as number[], factor: 1.0 }])
-    ) as Record<BandId, { peakHistory: number[]; factor: number }>
+      BAND_IDS.map((id) => [
+        id,
+        {
+          peakHistory: new Array<number>(PEAK_HISTORY_FRAMES).fill(0),
+          peakSum: 0,
+          historyIndex: 0,
+          historyCount: 0,
+          factor: 1.0,
+        },
+      ])
+    ) as Record<BandId, NormalizationBandState>
   );
+  const rawRef = useRef<Record<BandId, number>>(createEmptyBands8());
+  const peaksRef = useRef<Record<BandId, number>>(createEmptyBands8());
+  const normalizedRef = useRef<Record<BandId, number>>(createEmptyBands8());
+  const pulsesRef = useRef<BandPulses>(createEmptyPulses());
+  const enhancedRef = useRef<Record<BandId, number>>(createEmptyBands8());
+  const gatedRef = useRef<Bands8>(createEmptyBands8());
 
   const resetAnalyzerState = useCallback((): void => {
     resetNormalizationState(normStateRef.current);
     resetBandState(envelopeStateRef.current);
     resetBandState(prevRawRef.current);
+    resetBandState(rawRef.current);
+    resetBandState(peaksRef.current);
+    resetBandState(normalizedRef.current);
+    resetBandState(pulsesRef.current);
+    resetBandState(enhancedRef.current);
+    resetBandState(gatedRef.current);
     lastFrameTimeRef.current = 0;
+    lastUpdateAtRef.current = 0;
   }, []);
 
   useEffect(() => {
@@ -175,8 +211,10 @@ export function useFrequencyAnalyzer({
       analyserNode.getByteFrequencyData(dataArrayRef.current);
       const arr = dataArrayRef.current;
 
-      const raw: Record<BandId, number> = createEmptyBands8();
-      const peaks: Record<BandId, number> = createEmptyBands8();
+      const raw = rawRef.current;
+      const peaks = peaksRef.current;
+      resetBandState(raw);
+      resetBandState(peaks);
 
       for (const { id, start, end, peakWeight } of binRanges) {
         let sum = 0;
@@ -198,37 +236,45 @@ export function useFrequencyAnalyzer({
       const envelopeState = envelopeStateRef.current;
       const prevRaw = prevRawRef.current;
 
-      const normalized: Record<BandId, number> = createEmptyBands8();
+      const normalized = normalizedRef.current;
+      resetBandState(normalized);
       for (const id of BAND_IDS) {
         const peak = peaks[id];
-        const hist = normState[id].peakHistory;
-        hist.push(peak);
-        if (hist.length > PEAK_HISTORY_FRAMES) hist.shift();
-        const avgPeak =
-          hist.length > 0 ? hist.reduce((a, b) => a + b, 0) / hist.length : TARGET_PEAK;
+        const state = normState[id];
+        if (state.historyCount < PEAK_HISTORY_FRAMES) {
+          state.historyCount += 1;
+        } else {
+          state.peakSum -= state.peakHistory[state.historyIndex] ?? 0;
+        }
+        state.peakHistory[state.historyIndex] = peak;
+        state.peakSum += peak;
+        state.historyIndex = (state.historyIndex + 1) % PEAK_HISTORY_FRAMES;
+        const avgPeak = state.historyCount > 0 ? state.peakSum / state.historyCount : TARGET_PEAK;
         const targetRatio = TARGET_PEAK / Math.max(avgPeak, 1);
-        normState[id].factor =
-          normState[id].factor * NORM_SMOOTHING + targetRatio * (1 - NORM_SMOOTHING);
-        normState[id].factor = Math.max(
+        state.factor = state.factor * NORM_SMOOTHING + targetRatio * (1 - NORM_SMOOTHING);
+        state.factor = Math.max(
           NORM_CLAMP_MIN,
-          Math.min(NORM_CLAMP_MAX, normState[id].factor)
+          Math.min(NORM_CLAMP_MAX, state.factor)
         );
-        normalized[id] = raw[id] * normState[id].factor * gainMultiplier;
+        normalized[id] = raw[id] * state.factor * gainMultiplier;
       }
 
-      const pulses: BandPulses = createEmptyPulses();
+      const pulses = pulsesRef.current;
+      resetBandState(pulses);
       for (const id of BAND_IDS) {
         const delta = Math.max(0, normalized[id] - prevRaw[id]) * gate.transientSensitivity;
         pulses[id] = Math.min(1, delta);
         prevRaw[id] = normalized[id];
       }
 
-      const enhanced: Record<BandId, number> = createEmptyBands8();
+      const enhanced = enhancedRef.current;
+      resetBandState(enhanced);
       for (const id of BAND_IDS) {
         enhanced[id] = Math.min(1, normalized[id] + pulses[id]);
       }
 
-      const gated: Bands8 = createEmptyBands8();
+      const gated = gatedRef.current;
+      resetBandState(gated);
       for (const id of BAND_IDS) {
         let env = envelopeState[id];
         if (enhanced[id] > env) {
@@ -240,13 +286,16 @@ export function useFrequencyAnalyzer({
         gated[id] = applyGate(env);
       }
 
-      const frequencyData = deriveLegacyBands(gated);
-
-      onUpdateRef.current({
-        bands: gated,
-        pulses,
-        frequencyData,
-      });
+      if (minUpdateIntervalMs <= 0 || now - lastUpdateAtRef.current >= minUpdateIntervalMs) {
+        lastUpdateAtRef.current = now;
+        const bands: Bands8 = { ...gated };
+        const bandPulses: BandPulses = { ...pulses };
+        onUpdateRef.current({
+          bands,
+          pulses: bandPulses,
+          frequencyData: deriveLegacyBands(bands),
+        });
+      }
 
       animationFrameRef.current = requestAnimationFrame(analyze);
     };
@@ -263,5 +312,5 @@ export function useFrequencyAnalyzer({
       }
       resetAnalyzerState();
     };
-  }, [analyserNode, sampleRate, enabled, gainMultiplier, resetAnalyzerState]);
+  }, [analyserNode, sampleRate, enabled, gainMultiplier, minUpdateIntervalMs, resetAnalyzerState]);
 }

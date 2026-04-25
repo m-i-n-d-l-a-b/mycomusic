@@ -5,17 +5,15 @@ import { useAudioStore } from "../store/audioStore";
 export function AudioControls() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { loadAudio, play, pause, stop, captureSystemAudio, captureInputDeviceAudio } = useAudioEngine();
-  const {
-    audioBuffer,
-    captureSource,
-    currentTime,
-    duration,
-    error,
-    gainMultiplier,
-    isLoading,
-    isPlaying,
-    setGainMultiplier,
-  } = useAudioStore();
+  const audioBuffer = useAudioStore((state) => state.audioBuffer);
+  const captureSource = useAudioStore((state) => state.captureSource);
+  const currentTime = useAudioStore((state) => state.currentTime);
+  const duration = useAudioStore((state) => state.duration);
+  const error = useAudioStore((state) => state.error);
+  const gainMultiplier = useAudioStore((state) => state.gainMultiplier);
+  const isLoading = useAudioStore((state) => state.isLoading);
+  const isPlaying = useAudioStore((state) => state.isPlaying);
+  const setGainMultiplier = useAudioStore((state) => state.setGainMultiplier);
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];

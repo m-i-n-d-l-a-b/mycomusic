@@ -47,7 +47,7 @@ export const audioFeatureFrameSchema = z.object({
   source: z.enum(["file", "system", "input"]).optional(),
   bands: bands8Schema,
   pulses: bandPulsesSchema,
-  frequencyData: frequencyBandsSchema,
+  frequencyData: frequencyBandsSchema.optional(),
 });
 
 export type AudioFeatureFrame = z.infer<typeof audioFeatureFrameSchema>;

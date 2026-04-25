@@ -68,6 +68,12 @@ export function useMycoSocket(): UseMycoSocketResult {
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef(sessionId);
   const lastSentAtRef = useRef(0);
+  const lastFeatureRefsRef = useRef<{
+    bands: unknown;
+    pulses: unknown;
+    isPlaying: boolean;
+    captureSource: unknown;
+  } | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
 
@@ -139,6 +145,22 @@ export function useMycoSocket(): UseMycoSocketResult {
     connect();
 
     const unsubscribe = useAudioStore.subscribe((state) => {
+      const lastFeatureRefs = lastFeatureRefsRef.current;
+      if (
+        lastFeatureRefs?.bands === state.bands &&
+        lastFeatureRefs.pulses === state.pulses &&
+        lastFeatureRefs.isPlaying === state.isPlaying &&
+        lastFeatureRefs.captureSource === state.captureSource
+      ) {
+        return;
+      }
+      lastFeatureRefsRef.current = {
+        bands: state.bands,
+        pulses: state.pulses,
+        isPlaying: state.isPlaying,
+        captureSource: state.captureSource,
+      };
+
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (!(state.isPlaying || state.captureSource)) return;
@@ -154,7 +176,6 @@ export function useMycoSocket(): UseMycoSocketResult {
         source: getAudioSourceKind(),
         bands: state.bands,
         pulses: state.pulses,
-        frequencyData: state.frequencyData,
       };
 
       ws.send(JSON.stringify(frame));

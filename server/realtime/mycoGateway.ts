@@ -87,14 +87,14 @@ function startSnapshotLoop(session: GatewaySession, wss: WebSocketServer): void 
   session.interval = setInterval(() => {
     const now = Date.now();
     const deltaSec = Math.min(MAX_DELTA_SEC, Math.max(1 / 120, (now - session.lastTickAt) / 1_000));
+    session.lastTickAt = now;
+    const snapshot = session.simulation.step(deltaSec, wss.clients.size);
 
     if (session.ws.bufferedAmount > MAX_BUFFERED_BYTES) {
       session.simulation.noteDroppedFrame();
       return;
     }
 
-    session.lastTickAt = now;
-    const snapshot = session.simulation.step(deltaSec, wss.clients.size);
     sendJson(session.ws, {
       type: "myco.snapshot",
       sessionId: session.latestClientSessionId,
