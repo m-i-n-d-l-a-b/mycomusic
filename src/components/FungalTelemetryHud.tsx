@@ -37,60 +37,53 @@ export function FungalTelemetryHud({
 
   return (
     <section className="overlay-section telemetry-hud" aria-label="Fungal telemetry">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Fungal Telemetry</p>
-          <h2>Living Network State</h2>
-        </div>
+      <div className="section-header-compact">
+        <p className="eyebrow">Telemetry</p>
         <span className="morphology-badge" data-morphology={morphology}>
           {morphology}
         </span>
       </div>
 
-      <section className="bio-voltage-card" aria-label="Current bio-voltage">
-        <div>
-          <p className="eyebrow">Current Bio-Voltage</p>
-          <div className="bio-voltage-value">
-            {bioVoltageMv.toFixed(1)}
-            <span>mV peak</span>
+      <section className="bio-voltage-card-compact" aria-label="Current bio-voltage">
+        <div className="bio-voltage-compact">
+          <div className="bio-voltage-icon" aria-hidden="true">⚡</div>
+          <div>
+            <div className="bio-voltage-value-compact">
+              {bioVoltageMv.toFixed(1)}<span>mV</span>
+            </div>
+            <div className="meter-track-compact" aria-hidden="true">
+              <div className="meter-fill" style={{ width: voltagePercent }} />
+            </div>
           </div>
         </div>
-        <div className="meter-track" aria-hidden="true">
-          <div className="meter-fill" style={{ width: voltagePercent }} />
-        </div>
-        <p className="microcopy">Action potential range: 0.3 to 2.1 mV under rhythmic load.</p>
       </section>
 
-      <dl className="telemetry-list">
-        <div className="telemetry-row">
-          <dt>Network Topology Index</dt>
+      <dl className="telemetry-list-compact">
+        <div className="telemetry-row-compact">
+          <dt title="Network Topology Index">🕸️</dt>
           <dd>
-            <div className="telemetry-value">
-              <span>{topologyLabel}</span>
-              <span>{topologyIndex.toFixed(2)}</span>
-            </div>
-            <div className="topology-bar" aria-hidden="true">
+            <div className="topology-bar-compact" aria-hidden="true">
               <span style={{ width: percent(topologyIndex) }} />
             </div>
+            <div className="telemetry-label-compact">{topologyIndex.toFixed(2)}</div>
           </dd>
         </div>
-        <div className="telemetry-row">
-          <dt>Symbiotic State</dt>
-          <dd>{symbioticState}</dd>
+        <div className="telemetry-row-compact">
+          <dt title="Symbiotic State">🍄</dt>
+          <dd className="telemetry-compact-text">{symbioticState}</dd>
         </div>
-        <div className="telemetry-row">
-          <dt>Growth / Fusion</dt>
-          <dd>
-            <div className="telemetry-value">
-              <span>{growthRate.toFixed(1)} tips/s</span>
-              <span>{anastomosisRate.toFixed(2)} fusion</span>
-            </div>
-          </dd>
+        <div className="telemetry-row-compact">
+          <dt title="Growth Rate">📈</dt>
+          <dd className="telemetry-compact-text">{growthRate.toFixed(1)} tips/s</dd>
         </div>
-        <div className="telemetry-row">
-          <dt>Backend Link</dt>
-          <dd>
-            {connectionLabel(connectionState)} · Session {sessionId.slice(0, 8)}
+        <div className="telemetry-row-compact">
+          <dt title="Fusion Rate">🔗</dt>
+          <dd className="telemetry-compact-text">{anastomosisRate.toFixed(2)}</dd>
+        </div>
+        <div className="telemetry-row-compact">
+          <dt title="Backend Link">🌐</dt>
+          <dd className="telemetry-compact-text">
+            {connectionLabel(connectionState)}
           </dd>
         </div>
       </dl>

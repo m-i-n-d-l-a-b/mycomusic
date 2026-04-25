@@ -42,73 +42,80 @@ export function AudioControls() {
 
   return (
     <section className="overlay-section audio-controls" aria-label="Audio controls">
-      <div className="section-header">
-        <div>
-          <p className="eyebrow">Audio Source</p>
-          <h2>Signal Acquisition</h2>
-        </div>
-        <span className="source-chip">{sourceLabel}</span>
+      <div className="section-header-compact">
+        <p className="eyebrow">Audio</p>
+        <span className="source-chip-compact">{sourceLabel}</span>
       </div>
 
-      <div className="control-group">
-        <label className="control-label" htmlFor="audio-file">
-          Load an audio specimen
-        </label>
+      <div className="control-group-compact">
         <input
           id="audio-file"
           ref={fileInputRef}
           type="file"
           accept="audio/*"
           onChange={handleFileChange}
-          aria-describedby="audio-file-help"
-          aria-label="Choose audio file for mycelium visualization"
+          aria-label="Choose audio file"
         />
-        <p className="microcopy" id="audio-file-help">
-          Files stay in the browser; only normalized acoustic features are streamed to the engine.
-        </p>
       </div>
 
-      <div className="button-row">
+      <div className="button-grid-compact">
         <button
-          className="button-primary"
+          className="button-compact button-primary"
           type="button"
           onClick={() => play()}
           disabled={!canPlayFile}
-          aria-label="Play loaded audio file"
+          aria-label="Play"
+          title="Play loaded audio file"
         >
-          Play
+          ▶
         </button>
-        <button type="button" onClick={pause} disabled={!canPauseFile} aria-label="Pause loaded audio file">
-          Pause
+        <button
+          className="button-compact"
+          type="button"
+          onClick={pause}
+          disabled={!canPauseFile}
+          aria-label="Pause"
+          title="Pause loaded audio file"
+        >
+          ⏸
         </button>
-        <button type="button" onClick={stop} disabled={isLoading} aria-label="Stop audio or live capture">
-          Stop
+        <button
+          className="button-compact"
+          type="button"
+          onClick={stop}
+          disabled={isLoading}
+          aria-label="Stop"
+          title="Stop audio or live capture"
+        >
+          ⏹
         </button>
       </div>
 
-      <div className="button-row">
+      <div className="button-stack-compact">
         <button
+          className="button-compact-full"
           type="button"
           onClick={captureSystemAudio}
           disabled={isLoading}
-          aria-label="Capture tab or system audio"
+          aria-label="Capture tab/system audio"
         >
-          Capture Tab/System Audio
+          🖥️ Tab/System
         </button>
         <button
+          className="button-compact-full"
           type="button"
           onClick={captureInputDeviceAudio}
           disabled={isLoading}
-          aria-label="Capture microphone or input device audio"
+          aria-label="Capture input device"
         >
-          Capture Input Device
+          🎤 Input
         </button>
       </div>
 
-      <div className="control-group">
-        <label className="gain-control" htmlFor="gain-multiplier">
-          <span className="control-label">Apical growth gain</span>
-          <span>{gainMultiplier.toFixed(1)}x</span>
+      <div className="control-group-compact">
+        <label className="gain-control-compact" htmlFor="gain-multiplier">
+          <span className="control-label-compact">Gain</span>
+          <span className="gain-value-compact">{gainMultiplier.toFixed(1)}x</span>
           <input
             id="gain-multiplier"
             type="range"
@@ -123,8 +130,8 @@ export function AudioControls() {
         </label>
       </div>
 
-      <p className="status-line" aria-live="polite">
-        {isLoading ? "Preparing audio graph..." : statusLabel}
+      <p className="status-line-compact" aria-live="polite">
+        {isLoading ? "Loading..." : statusLabel}
       </p>
 
       {error ? <p className="error-text">{error}</p> : null}
