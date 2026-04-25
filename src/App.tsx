@@ -66,23 +66,24 @@ export function App() {
           <span>{symbioticState}</span>
         </div>
 
-        {isOverlayOpen ? (
-          <div id={overlayContentId} className="overlay-content">
-            <p className="overlay-description">
-              Audio features become hyphal growth, electrophysiological spikes, and fungal topology
-              in real time.
-            </p>
-            <AudioControls />
-            <FungalTelemetryHud
-              connectionState={connectionState}
-              error={error}
-              sessionId={sessionId}
-              snapshot={snapshot}
-            />
-          </div>
-        ) : (
-          <div id={overlayContentId} className="overlay-content" hidden aria-hidden="true" />
-        )}
+        <div
+          id={overlayContentId}
+          className="overlay-content"
+          hidden={!isOverlayOpen}
+          aria-hidden={!isOverlayOpen}
+        >
+          <p className="overlay-description">
+            Audio features become hyphal growth, electrophysiological spikes, and fungal topology in
+            real time.
+          </p>
+          <AudioControls />
+          <FungalTelemetryHud
+            connectionState={connectionState}
+            error={error}
+            sessionId={sessionId}
+            snapshot={snapshot}
+          />
+        </div>
       </aside>
 
       <p className="sr-only" aria-live="polite">
