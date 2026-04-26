@@ -1,8 +1,11 @@
 import type { BandPulses, Bands8 } from "../audio/types";
 import {
+  advanceKickImpact,
+  computeKickFftMaxNorm,
   computeEdgeReveal,
   computeTravelPulse,
   deriveReactiveVisualState,
+  mergeKickPulseFromBassFft,
 } from "./rhizosphereRendering";
 
 const emptyBands: Bands8 = {
@@ -34,6 +37,7 @@ describe("rhizosphere rendering helpers", () => {
       },
       pulses: {
         ...emptyPulses,
+        upperBass: 0.55,
         presence: 0.35,
         air: 0.85,
       },
@@ -44,6 +48,7 @@ describe("rhizosphere rendering helpers", () => {
     expect(state.midEnergy).toBeCloseTo(0.4);
     expect(state.trebleEnergy).toBeCloseTo(0.9);
     expect(state.pulse).toBeCloseTo(0.85);
+    expect(state.kickPulse).toBe(1);
     expect(state.substrateBreath).toBeGreaterThan(state.overallEnergy);
     expect(state.sparkIntensity).toBeGreaterThan(0.8);
     expect(state.isSilent).toBe(false);
@@ -58,13 +63,35 @@ describe("rhizosphere rendering helpers", () => {
 
     expect(state.overallEnergy).toBe(0);
     expect(state.pulse).toBe(0);
+    expect(state.kickPulse).toBe(0);
     expect(state.sparkIntensity).toBe(0);
     expect(state.isSilent).toBe(true);
   });
 
+  it("does not turn sustained bass energy into kick glow without a transient", () => {
+    const state = deriveReactiveVisualState({
+      bands: { ...emptyBands, subBass: 0.9, midBass: 0.8, upperBass: 0.7 },
+      pulses: emptyPulses,
+      isActive: true,
+    });
+
+    expect(state.bassEnergy).toBeGreaterThan(0.7);
+    expect(state.kickPulse).toBe(0);
+  });
+
+  it("does not treat lower bass pulses as kick hits", () => {
+    const state = deriveReactiveVisualState({
+      bands: { ...emptyBands, subBass: 0.9, midBass: 0.8, upperBass: 0.2 },
+      pulses: { ...emptyPulses, subBass: 1, midBass: 1 },
+      isActive: true,
+    });
+
+    expect(state.kickPulse).toBe(0);
+  });
+
   it("reveals newly created edges gradually without exceeding full opacity", () => {
     expect(computeEdgeReveal(0, 0)).toBe(0);
-    expect(computeEdgeReveal(0.45, 0)).toBeCloseTo(0.25);
+    expect(computeEdgeReveal(0.45, 0)).toBeCloseTo(0.321428);
     expect(computeEdgeReveal(0.1, 0.75)).toBeCloseTo(0.75);
     expect(computeEdgeReveal(5, 0.25)).toBe(1);
   });
@@ -96,5 +123,63 @@ describe("rhizosphere rendering helpers", () => {
     expect(active).toBeGreaterThan(0);
     expect(active).toBeLessThanOrEqual(1);
     expect(reduced).toBeLessThan(active);
+  });
+
+  it("ignores sustained bass FFT energy and treats sharp bass rises as kick hits", () => {
+    const sustained = mergeKickPulseFromBassFft({
+      rawKickPulse: 0,
+      bassMaxNorm: 0.5,
+      previousBassMaxNorm: 0.5,
+    });
+    const transient = mergeKickPulseFromBassFft({
+      rawKickPulse: 0,
+      bassMaxNorm: 0.5,
+      previousBassMaxNorm: 0.35,
+    });
+    const rawTransient = mergeKickPulseFromBassFft({
+      rawKickPulse: 0.7,
+      bassMaxNorm: 0.05,
+      previousBassMaxNorm: 0.05,
+    });
+
+    expect(sustained).toBe(0);
+    expect(transient).toBeGreaterThan(0.85);
+    expect(rawTransient).toBeCloseTo(0.7);
+  });
+
+  it("reads kick FFT energy only from the 125-175 Hz window", () => {
+    const fft = new Uint8Array(new ArrayBuffer(1024));
+    fft[5] = 255;
+    fft[6] = 128;
+    fft[8] = 200;
+    fft[9] = 255;
+
+    expect(computeKickFftMaxNorm(fft, 44_100)).toBeCloseTo(200 / 255);
+  });
+
+  it("advances a visible kick impact with thresholding and decay", () => {
+    const quiet = advanceKickImpact({
+      previousImpact: 0,
+      kickPulse: 0.18,
+      deltaSeconds: 1 / 60,
+      reducedMotion: false,
+    });
+    const hit = advanceKickImpact({
+      previousImpact: 0,
+      kickPulse: 0.75,
+      deltaSeconds: 1 / 60,
+      reducedMotion: false,
+    });
+    const decayed = advanceKickImpact({
+      previousImpact: hit,
+      kickPulse: 0,
+      deltaSeconds: 0.2,
+      reducedMotion: false,
+    });
+
+    expect(quiet).toBe(0);
+    expect(hit).toBeGreaterThan(0.7);
+    expect(decayed).toBeLessThan(hit);
+    expect(decayed).toBeGreaterThan(0);
   });
 });

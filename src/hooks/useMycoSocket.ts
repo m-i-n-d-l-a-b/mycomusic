@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { MycoSimulation } from "../../server/simulation/mycoSimulation";
 import { useAudioStore } from "../store/audioStore";
+import { parseServerMessage } from "../../server/domain/mycoProtocol";
 import type {
   AudioFeatureFrame,
   AudioSourceKind,
   MycoErrorMessage,
   MycoSnapshotMessage,
-  MycoServerMessage,
 } from "../../server/domain/mycoProtocol";
 
 type ConnectionState = "connecting" | "open" | "closed" | "error" | "local";
@@ -69,24 +69,6 @@ function getAudioSourceKind(): AudioSourceKind {
   if (state.captureSource) return state.captureSource;
   if (state.audioBuffer) return "file";
   return "input";
-}
-
-function parseServerMessage(data: unknown): MycoServerMessage | null {
-  try {
-    const message = JSON.parse(String(data)) as Partial<MycoServerMessage>;
-    if (
-      message.type === "myco.ready" ||
-      message.type === "myco.snapshot" ||
-      message.type === "myco.telemetry" ||
-      message.type === "myco.error"
-    ) {
-      return message as MycoServerMessage;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
 }
 
 /**
@@ -218,11 +200,21 @@ export function useMycoSocket(): UseMycoSocketResult {
       });
 
       ws.addEventListener("message", (event) => {
-        const message = parseServerMessage(event.data);
-        if (!message) {
+        let parsedJson: unknown;
+        try {
+          parsedJson = JSON.parse(String(event.data));
+        } catch {
           setError("Received malformed WebSocket message");
           return;
         }
+
+        const parsed = parseServerMessage(parsedJson);
+        if (!parsed.success) {
+          setError(`Received invalid WebSocket message: ${parsed.error}`);
+          return;
+        }
+
+        const message = parsed.message;
 
         if (message.type === "myco.ready") {
           sessionIdRef.current = message.sessionId;

@@ -91,7 +91,7 @@ export function useFrequencyAnalyzer({
   minUpdateIntervalMs = 0,
 }: UseFrequencyAnalyzerOptions) {
   const animationFrameRef = useRef<number | null>(null);
-  const dataArrayRef = useRef<Uint8Array | undefined>(undefined);
+  const dataArrayRef = useRef<Uint8Array<ArrayBuffer> | undefined>(undefined);
   const lastFrameTimeRef = useRef<number>(0);
   const lastUpdateAtRef = useRef<number>(0);
 
@@ -207,7 +207,6 @@ export function useFrequencyAnalyzer({
       const attackCoeff = Math.exp(-deltaSec / gate.attackTime);
       const releaseCoeff = Math.exp(-deltaSec / gate.releaseTime);
 
-      // @ts-expect-error - getByteFrequencyData expects Uint8Array<ArrayBuffer> but infers ArrayBufferLike
       analyserNode.getByteFrequencyData(dataArrayRef.current);
       const arr = dataArrayRef.current;
 

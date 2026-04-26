@@ -148,7 +148,7 @@ input[type="range"] {
 .rhizosphere {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: 3;
 }
 
 .rhizosphere canvas {
@@ -802,7 +802,7 @@ dd {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
+@media (prefers-reduced-motion: no-preference) {
   *,
   *::before,
   *::after {

@@ -1,4 +1,4 @@
-import { parseClientMessage } from "../../../server/domain/mycoProtocol";
+import { parseClientMessage, parseServerMessage } from "../../../server/domain/mycoProtocol";
 
 describe("mycoProtocol", () => {
   it("clamps valid feature frames into normalized numeric ranges", () => {
@@ -78,6 +78,67 @@ describe("mycoProtocol", () => {
       type: "audio.feature",
       sessionId: "",
       timestamp: "soon",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects snapshots with missing edge endpoints", () => {
+    const parsed = parseServerMessage({
+      type: "myco.snapshot",
+      sessionId: "session-1",
+      timestamp: 123,
+      nodes: [
+        { id: "n0", x: 0, y: 0, z: 0, radius: 0.03, charge: 0, morphology: "Balanced", birthOrder: 0 },
+      ],
+      edges: [
+        {
+          id: "e0",
+          source: "n0",
+          target: "missing",
+          thickness: 0.2,
+          conductivity: 0.5,
+          age: 0,
+          fused: false,
+          birthOrder: 1,
+        },
+      ],
+      tips: [],
+      telemetry: {
+        bioVoltageMv: 0,
+        topologyIndex: 0,
+        topologyLabel: "Dendritic Tree",
+        symbioticState: "Resource Hoarding",
+        morphology: "Balanced",
+        growthRate: 0,
+        anastomosisRate: 0,
+      },
+      debug: { tick: 0, droppedFrames: 0, inputAgeMs: 0, connectedClients: 0 },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects snapshots with malformed numeric fields", () => {
+    const parsed = parseServerMessage({
+      type: "myco.snapshot",
+      sessionId: "session-1",
+      timestamp: 123,
+      nodes: [
+        { id: "n0", x: Number.NaN, y: 0, z: 0, radius: 0.03, charge: 0, morphology: "Balanced", birthOrder: 0 },
+      ],
+      edges: [],
+      tips: [],
+      telemetry: {
+        bioVoltageMv: 0,
+        topologyIndex: 0,
+        topologyLabel: "Dendritic Tree",
+        symbioticState: "Resource Hoarding",
+        morphology: "Balanced",
+        growthRate: 0,
+        anastomosisRate: 0,
+      },
+      debug: { tick: 0, droppedFrames: 0, inputAgeMs: 0, connectedClients: 0 },
     });
 
     expect(parsed.success).toBe(false);

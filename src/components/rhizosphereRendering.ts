@@ -12,6 +12,8 @@ export interface ReactiveVisualState {
   midEnergy: number;
   trebleEnergy: number;
   pulse: number;
+  /** Transient level in sub–upper bass; use for kick hits. */
+  kickPulse: number;
   substrateBreath: number;
   sparkIntensity: number;
   isSilent: boolean;
@@ -25,7 +27,23 @@ interface TravelPulseInput {
   voltageIntensity: number;
 }
 
-const EDGE_REVEAL_SECONDS = 1.8;
+interface FftKickPulseInput {
+  rawKickPulse: number;
+  bassMaxNorm: number;
+  previousBassMaxNorm: number;
+}
+
+interface KickImpactInput {
+  previousImpact: number;
+  kickPulse: number;
+  deltaSeconds: number;
+  reducedMotion: boolean;
+}
+
+const EDGE_REVEAL_SECONDS = 1.4;
+const KICK_TRANSIENT_FLOOR = 0.19;
+export const KICK_FREQUENCY_LOW_HZ = 50;
+export const KICK_FREQUENCY_HIGH_HZ = 80;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -34,6 +52,30 @@ function clamp01(value: number): number {
 function average(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function shapeKickTransient(value: number): number {
+  return clamp01((value - KICK_TRANSIENT_FLOOR) * 3.6);
+}
+
+function kickBandPulse(pulses: BandPulses): number {
+  return pulses.upperBass;
+}
+
+export function computeKickFftMaxNorm(frequencyData: Uint8Array, sampleRate: number): number {
+  if (frequencyData.length === 0 || sampleRate <= 0) return 0;
+
+  const binWidthHz = (sampleRate / 2) / frequencyData.length;
+  const startBin = Math.max(0, Math.ceil(KICK_FREQUENCY_LOW_HZ / binWidthHz));
+  const endBin = Math.min(frequencyData.length - 1, Math.floor(KICK_FREQUENCY_HIGH_HZ / binWidthHz));
+  if (endBin < startBin) return 0;
+
+  let max = 0;
+  for (let i = startBin; i <= endBin; i += 1) {
+    max = Math.max(max, frequencyData[i] ?? 0);
+  }
+
+  return clamp01(max / 255);
 }
 
 export function deriveReactiveVisualState({
@@ -48,6 +90,7 @@ export function deriveReactiveVisualState({
       midEnergy: 0,
       trebleEnergy: 0,
       pulse: 0,
+      kickPulse: 0,
       substrateBreath: 0,
       sparkIntensity: 0,
       isSilent: true,
@@ -78,6 +121,9 @@ export function deriveReactiveVisualState({
     pulses.air
   );
   const sparkPulse = Math.max(pulses.presence, pulses.air);
+  // Kick glow is tuned to the upper-bass punch range; raw FFT narrows it further to 125-175 Hz.
+  const fromTransient = kickBandPulse(pulses);
+  const kickPulse = shapeKickTransient(fromTransient);
 
   return {
     overallEnergy,
@@ -85,6 +131,7 @@ export function deriveReactiveVisualState({
     midEnergy,
     trebleEnergy,
     pulse,
+    kickPulse,
     substrateBreath: clamp01(overallEnergy * 0.72 + bassEnergy * 0.42 + pulse * 0.25),
     sparkIntensity: clamp01(trebleEnergy * 0.45 + sparkPulse * 0.7),
     isSilent: overallEnergy < 0.015 && pulse < 0.03,
@@ -113,4 +160,31 @@ export function computeTravelPulse({
   const phase = (timeMs * 0.0012 + edgeSeed * 0.73) % 1;
   const wave = Math.max(0, 1 - Math.abs(phase - 0.5) / 0.22);
   return clamp01(wave * voltage * (0.35 + boundedConductivity * 0.65));
+}
+
+export function mergeKickPulseFromBassFft({
+  rawKickPulse,
+  bassMaxNorm,
+  previousBassMaxNorm,
+}: FftKickPulseInput): number {
+  const current = clamp01(bassMaxNorm);
+  const previous = clamp01(previousBassMaxNorm);
+  const rise = Math.max(0, current - previous);
+  const fromFft = current > 0.16 && rise > 0.025 ? shapeKickTransient(rise * 7) : 0;
+
+  return clamp01(Math.max(rawKickPulse, fromFft));
+}
+
+export function advanceKickImpact({
+  previousImpact,
+  kickPulse,
+  deltaSeconds,
+  reducedMotion,
+}: KickImpactInput): number {
+  const decayRate = reducedMotion ? 10 : 7;
+  const decayed = clamp01(previousImpact) * Math.exp(-Math.max(0, deltaSeconds) * decayRate);
+  const thresholded = clamp01((kickPulse - 0.22) / 0.78);
+  const shaped = Math.pow(thresholded, 0.72) * (reducedMotion ? 0.55 : 1);
+
+  return Math.max(decayed, shaped);
 }

@@ -15,9 +15,12 @@ const DEFAULT_MAX_NODES = 640;
 /** Baseline growth throughput; lower = fewer extension events per second at the same forces. */
 const BASELINE_GROWTH_FPS = 10;
 const MIN_GROWTH_PRESSURE = 0.08;
+const MIN_ANASTOMOSIS_NODES = 12;
 /** At few nodes, growth budget accumulates at `SEEDLING_GROWTH_MULT` of full rate; scales linearly to 1 by this count. */
 const GROWTH_RAMP_FULL_NODE_COUNT = 400;
 const SEEDLING_GROWTH_MULT = 0.85;
+const MIN_BRANCH_SEPARATION_DOT = 0.94;
+const BRANCH_DIRECTION_ATTEMPTS = 6;
 
 function createPrng(seed: number): () => number {
   let state = seed >>> 0;
@@ -32,7 +35,23 @@ function clamp(value: number, min = 0, max = 1): number {
 }
 
 function distance(a: MycoNode, b: MycoNode): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+function normalizeDirection(direction: { dx: number; dy: number; dz: number }): { dx: number; dy: number; dz: number } {
+  const length = Math.hypot(direction.dx, direction.dy, direction.dz) || 1;
+  return {
+    dx: direction.dx / length,
+    dy: direction.dy / length,
+    dz: direction.dz / length,
+  };
+}
+
+function dotDirection(
+  a: { dx: number; dy: number; dz: number },
+  b: { dx: number; dy: number; dz: number }
+): number {
+  return a.dx * b.dx + a.dy * b.dy + a.dz * b.dz;
 }
 
 export class MyceliumGraph {
@@ -44,6 +63,10 @@ export class MyceliumGraph {
   private adjacency = new Map<string, MycoEdge[]>();
   private tips: InternalTip[] = [];
   private tick = 0;
+  private nextBirthOrder = 1;
+  private nextNodeId = 1;
+  private nextEdgeId = 0;
+  private nextTipId = 4;
   private growthBudget = 0;
   private fusedEdgeCount = 0;
   private lastForces: MycoForces = {
@@ -64,7 +87,7 @@ export class MyceliumGraph {
 
   constructor(options: GraphOptions = {}) {
     this.rand = createPrng(options.seed ?? 1337);
-    this.maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES;
+    this.maxNodes = Math.max(1, Math.floor(options.maxNodes ?? DEFAULT_MAX_NODES));
     this.seedGraph();
   }
 
@@ -73,17 +96,22 @@ export class MyceliumGraph {
     this.lastForces = forces;
     this.decayElectricalCharge(deltaSec);
     this.ageEdges(deltaSec);
+    this.ensureActiveTip();
 
-    const startingNodeCount = this.nodes.length;
     const growthEvents = this.computeGrowthEvents(forces, deltaSec);
+    let createdNodes = 0;
 
-    for (let i = 0; i < growthEvents && this.nodes.length < this.maxNodes; i++) {
+    for (let i = 0; i < growthEvents; i++) {
       const tip = this.selectTip();
       if (!tip) break;
+      const beforeNodeCount = this.nodes.length;
       this.extendTip(tip, forces, deltaSec);
+      createdNodes += Math.max(0, this.nodes.length - beforeNodeCount);
     }
 
-    this.lastGrowthRate = (this.nodes.length - startingNodeCount) / Math.max(deltaSec, 1 / 60);
+    this.pruneOldestBranches(this.nodes.length - this.maxNodes);
+
+    this.lastGrowthRate = createdNodes / Math.max(deltaSec, 1 / 60);
   }
 
   snapshot(debug: Partial<MycoSnapshotPayload["debug"]> = {}): MycoSnapshotPayload {
@@ -109,9 +137,11 @@ export class MyceliumGraph {
       id: "node-0",
       x: 0,
       y: 0,
+      z: 0,
       radius: 0.028,
       charge: 0,
       morphology: "Balanced",
+      birthOrder: 0,
     };
 
     this.nodes = [root];
@@ -119,9 +149,15 @@ export class MyceliumGraph {
     this.edges = [];
     this.adjacency = new Map([[root.id, []]]);
     this.fusedEdgeCount = 0;
+    this.nextBirthOrder = 1;
+    this.nextNodeId = 1;
+    this.nextEdgeId = 0;
+    this.nextTipId = 4;
     this.tips = [
-      { id: "tip-0", nodeId: root.id, angle: -0.15, energy: 1, age: 0 },
-      { id: "tip-1", nodeId: root.id, angle: Math.PI + 0.15, energy: 1, age: 0 },
+      { id: "tip-0", nodeId: root.id, dx: 0.9, dy: -0.26, dz: 0.36, energy: 1, age: 0 },
+      { id: "tip-1", nodeId: root.id, dx: -0.86, dy: 0.32, dz: -0.4, energy: 1, age: 0 },
+      { id: "tip-2", nodeId: root.id, dx: 0.34, dy: 0.74, dz: -0.58, energy: 1, age: 0 },
+      { id: "tip-3", nodeId: root.id, dx: -0.38, dy: -0.7, dz: 0.6, energy: 1, age: 0 },
     ];
   }
 
@@ -179,50 +215,142 @@ export class MyceliumGraph {
     const source = this.nodesById.get(tip.nodeId);
     if (!source) return;
 
+    const birthOrder = this.nextBirthOrder;
+    this.nextBirthOrder += 1;
     tip.age += deltaSec;
     const morphologyJitter = forces.morphology === "AM" ? 0.9 : forces.morphology === "ECM" ? 0.35 : 0.6;
-    const jitter = (this.rand() - 0.5) * morphologyJitter;
-    const angle = tip.angle + jitter;
+    const verticalBias = forces.morphology === "AM" ? 0.08 : forces.morphology === "ECM" ? -0.03 : 0.02;
+    const direction = normalizeDirection({
+      dx: tip.dx + (this.rand() - 0.5) * morphologyJitter,
+      dy: tip.dy + (this.rand() - 0.5) * morphologyJitter + verticalBias,
+      dz: tip.dz + (this.rand() - 0.5) * morphologyJitter,
+    });
     const length = forces.extensionRate * (0.65 + this.rand() * 0.7);
     const morphology = forces.morphology;
     const node: MycoNode = {
-      id: `node-${this.nodes.length}`,
-      x: source.x + Math.cos(angle) * length,
-      y: source.y + Math.sin(angle) * length,
+      id: `node-${this.nextNodeId}`,
+      x: source.x + direction.dx * length,
+      y: source.y + direction.dy * length,
+      z: source.z + direction.dz * length,
       radius: this.radiusFor(morphology, forces),
       charge: forces.pulse,
       morphology,
+      birthOrder,
     };
+    this.nextNodeId += 1;
+    const actualDirection = normalizeDirection({
+      dx: node.x - source.x,
+      dy: node.y - source.y,
+      dz: node.z - source.z,
+    });
 
     this.nodes.push(node);
     this.nodesById.set(node.id, node);
     this.adjacency.set(node.id, []);
     this.addEdge({
-      id: `edge-${this.edges.length}`,
+      id: `edge-${this.nextEdgeId}`,
       source: source.id,
       target: node.id,
       thickness: forces.edgeThickness,
       conductivity: clamp(0.35 + forces.harmony * 0.45 + forces.pulse * 0.2),
       age: 0,
       fused: false,
+      birthOrder,
     });
+    this.nextEdgeId += 1;
 
     tip.nodeId = node.id;
-    tip.angle = angle;
+    tip.dx = actualDirection.dx;
+    tip.dy = actualDirection.dy;
+    tip.dz = actualDirection.dz;
     tip.energy = clamp(tip.energy * 0.92 + forces.growthPressure * 0.3);
 
     if (this.rand() < forces.branchProbability && this.tips.length < 96) {
+      const branchDirection = this.createSeparatedBranchDirection(node, actualDirection);
       this.tips.push({
-        id: `tip-${this.tips.length}`,
+        id: `tip-${this.nextTipId}`,
         nodeId: node.id,
-        angle: angle + (this.rand() > 0.5 ? 1 : -1) * (0.45 + this.rand() * 0.95),
+        dx: branchDirection.dx,
+        dy: branchDirection.dy,
+        dz: branchDirection.dz,
         energy: tip.energy * 0.85,
         age: 0,
       });
+      this.nextTipId += 1;
     }
 
-    this.tryAnastomosis(node, source.id, forces);
+    this.tryAnastomosis(node, source.id, forces, birthOrder);
     this.applySpikeCascade(node.id, forces);
+  }
+
+  private isSeparatedFromReferences(
+    candidate: { dx: number; dy: number; dz: number },
+    references: { dx: number; dy: number; dz: number }[]
+  ): boolean {
+    return references.every((reference) => dotDirection(candidate, reference) <= MIN_BRANCH_SEPARATION_DOT);
+  }
+
+  private branchReferencesFor(nodeId: string, parentDirection: { dx: number; dy: number; dz: number }) {
+    const references = [parentDirection];
+    for (const existingTip of this.tips) {
+      if (existingTip.nodeId === nodeId) {
+        references.push(existingTip);
+      }
+    }
+    return references;
+  }
+
+  private fallbackBranchDirection(
+    node: MycoNode,
+    parentDirection: { dx: number; dy: number; dz: number },
+    references: { dx: number; dy: number; dz: number }[]
+  ): { dx: number; dy: number; dz: number } {
+    const referenceAxis = Math.abs(parentDirection.dy) < 0.8 ? { dx: 0, dy: 1, dz: 0 } : { dx: 1, dy: 0, dz: 0 };
+    const normalA = normalizeDirection({
+      dx: parentDirection.dy * referenceAxis.dz - parentDirection.dz * referenceAxis.dy,
+      dy: parentDirection.dz * referenceAxis.dx - parentDirection.dx * referenceAxis.dz,
+      dz: parentDirection.dx * referenceAxis.dy - parentDirection.dy * referenceAxis.dx,
+    });
+    const normalB = normalizeDirection({
+      dx: parentDirection.dy * normalA.dz - parentDirection.dz * normalA.dy,
+      dy: parentDirection.dz * normalA.dx - parentDirection.dx * normalA.dz,
+      dz: parentDirection.dx * normalA.dy - parentDirection.dy * normalA.dx,
+    });
+    const angles = [0, Math.PI / 2, Math.PI, Math.PI * 1.5, 0.72, -0.72, 1.38, -1.38];
+
+    for (const angle of angles) {
+      const sideWeight = 0.94;
+      const forwardWeight = 0.34;
+      const candidate = normalizeDirection({
+        dx: parentDirection.dx * forwardWeight + (normalA.dx * Math.cos(angle) + normalB.dx * Math.sin(angle)) * sideWeight,
+        dy: parentDirection.dy * forwardWeight + (normalA.dy * Math.cos(angle) + normalB.dy * Math.sin(angle)) * sideWeight,
+        dz: parentDirection.dz * forwardWeight + (normalA.dz * Math.cos(angle) + normalB.dz * Math.sin(angle)) * sideWeight,
+      });
+      if (this.isSeparatedFromReferences(candidate, references)) {
+        return candidate;
+      }
+    }
+
+    return normalA;
+  }
+
+  private createSeparatedBranchDirection(
+    node: MycoNode,
+    parentDirection: { dx: number; dy: number; dz: number }
+  ): { dx: number; dy: number; dz: number } {
+    const references = this.branchReferencesFor(node.id, parentDirection);
+    for (let attempt = 0; attempt < BRANCH_DIRECTION_ATTEMPTS; attempt += 1) {
+      const candidate = normalizeDirection({
+        dx: parentDirection.dx + (this.rand() - 0.5) * 1.15,
+        dy: parentDirection.dy + (this.rand() - 0.5) * 1.15,
+        dz: parentDirection.dz + (this.rand() - 0.5) * 1.15,
+      });
+      if (this.isSeparatedFromReferences(candidate, references)) {
+        return candidate;
+      }
+    }
+
+    return this.fallbackBranchDirection(node, parentDirection, references);
   }
 
   private radiusFor(morphology: Morphology, forces: MycoForces): number {
@@ -231,34 +359,172 @@ export class MyceliumGraph {
     return 0.012 + forces.edgeThickness * 0.025;
   }
 
-  private tryAnastomosis(node: MycoNode, sourceId: string, forces: MycoForces): void {
-    if (this.nodes.length < 4) return;
+  private tryAnastomosis(node: MycoNode, sourceId: string, forces: MycoForces, birthOrder: number): void {
+    if (this.nodes.length < MIN_ANASTOMOSIS_NODES) return;
 
     const probability = clamp(forces.anastomosisRate * (0.18 + forces.harmony * 0.32));
     if (this.rand() > probability) return;
 
-    const nearest = this.findAnastomosisCandidate(node, sourceId);
+    const nearest = this.findAnastomosisCandidate(node, sourceId, forces.extensionRate);
 
     if (!nearest) return;
 
     this.addEdge({
-      id: `edge-${this.edges.length}`,
+      id: `edge-${this.nextEdgeId}`,
       source: node.id,
       target: nearest.id,
       thickness: Math.max(0.12, forces.edgeThickness * 0.8),
       conductivity: clamp(0.45 + forces.harmony * 0.5),
       age: 0,
       fused: true,
+      birthOrder,
+    });
+    this.nextEdgeId += 1;
+  }
+
+  private pruneOldestBranches(overBudget: number): void {
+    if (overBudget <= 0 || this.nodes.length <= 1) return;
+
+    let remaining = Math.min(overBudget, this.nodes.length - 1);
+    while (remaining > 0) {
+      const pruneId = this.findOldestPrunableLeafId();
+      if (!pruneId) break;
+      this.retreatTipsFromPrunedLeaf(pruneId);
+
+      this.nodes = this.nodes.filter((node) => node.id !== pruneId);
+      const liveNodeIds = new Set(this.nodes.map((node) => node.id));
+      this.edges = this.edges.filter((edge) => liveNodeIds.has(edge.source) && liveNodeIds.has(edge.target));
+      this.tips = this.tips.filter((tip) => liveNodeIds.has(tip.nodeId));
+      this.rebuildIndexes();
+      remaining -= 1;
+    }
+
+    this.ensureActiveTip();
+  }
+
+  private findOldestPrunableLeafId(): string | null {
+    const rootId = this.nodes[0]?.id;
+    if (!rootId) return null;
+
+    const treeChildCount = new Map<string, number>();
+    for (const node of this.nodes) {
+      treeChildCount.set(node.id, 0);
+    }
+    for (const edge of this.edges) {
+      if (edge.fused) continue;
+      treeChildCount.set(edge.source, (treeChildCount.get(edge.source) ?? 0) + 1);
+    }
+
+    const activeTipNodeIds = new Set(this.tips.map((tip) => tip.nodeId));
+    const byAgeThenId = (a: MycoNode, b: MycoNode) => a.birthOrder - b.birthOrder || a.id.localeCompare(b.id);
+    const leafCandidates = this.nodes
+      .filter((node) => node.id !== rootId && (treeChildCount.get(node.id) ?? 0) === 0)
+      .sort(byAgeThenId);
+
+    return (
+      leafCandidates.find((node) => !activeTipNodeIds.has(node.id))?.id ??
+      leafCandidates[0]?.id ??
+      this.nodes.filter((node) => node.id !== rootId).sort(byAgeThenId)[0]?.id ??
+      null
+    );
+  }
+
+  private retreatTipsFromPrunedLeaf(pruneId: string): void {
+    const prunedNode = this.nodesById.get(pruneId);
+    const parentEdge = this.edges.find((edge) => !edge.fused && edge.target === pruneId);
+    const parent = parentEdge ? this.nodesById.get(parentEdge.source) : undefined;
+    if (!(prunedNode && parent)) return;
+
+    const retreatDirection = normalizeDirection({
+      dx: prunedNode.x - parent.x,
+      dy: prunedNode.y - parent.y,
+      dz: prunedNode.z - parent.z,
+    });
+    for (const tip of this.tips) {
+      if (tip.nodeId !== pruneId) continue;
+      tip.nodeId = parent.id;
+      tip.dx = retreatDirection.dx;
+      tip.dy = retreatDirection.dy;
+      tip.dz = retreatDirection.dz;
+      tip.energy = Math.max(0.35, tip.energy * 0.92);
+      tip.age = 0;
+    }
+  }
+
+  private rebuildIndexes(): void {
+    this.nodesById = new Map();
+    this.adjacency = new Map();
+    for (const node of this.nodes) {
+      this.nodesById.set(node.id, node);
+      this.adjacency.set(node.id, []);
+    }
+
+    const validEdges: MycoEdge[] = [];
+    this.fusedEdgeCount = 0;
+    for (const edge of this.edges) {
+      if (!(this.nodesById.has(edge.source) && this.nodesById.has(edge.target))) continue;
+      validEdges.push(edge);
+      if (edge.fused) this.fusedEdgeCount += 1;
+
+      const sourceEdges = this.adjacency.get(edge.source) ?? [];
+      sourceEdges.push(edge);
+      this.adjacency.set(edge.source, sourceEdges);
+
+      const targetEdges = this.adjacency.get(edge.target) ?? [];
+      targetEdges.push(edge);
+      this.adjacency.set(edge.target, targetEdges);
+    }
+    this.edges = validEdges;
+  }
+
+  private ensureActiveTip(): void {
+    if (this.tips.length > 0) return;
+    const node = [...this.nodes].sort((a, b) => b.birthOrder - a.birthOrder)[0];
+    if (!node) return;
+
+    const parentEdge = this.edges.find((edge) => !edge.fused && edge.target === node.id);
+    const parent = parentEdge ? this.nodesById.get(parentEdge.source) : undefined;
+    const direction = parent
+      ? normalizeDirection({
+          dx: node.x - parent.x,
+          dy: node.y - parent.y,
+          dz: node.z - parent.z,
+        })
+      : normalizeDirection({
+          dx: this.rand() - 0.5,
+          dy: this.rand() - 0.5,
+          dz: this.rand() - 0.5,
+        });
+
+    this.tips.push({
+      id: `tip-${this.nextTipId}`,
+      nodeId: node.id,
+      dx: direction.dx,
+      dy: direction.dy,
+      dz: direction.dz,
+      energy: 0.85,
+      age: 0,
+    });
+    this.nextTipId += 1;
+  }
+
+  private hasEdgeBetween(aId: string, bId: string): boolean {
+    return (this.adjacency.get(aId) ?? []).some((edge) => {
+      return (edge.source === aId && edge.target === bId) || (edge.source === bId && edge.target === aId);
     });
   }
 
-  private findAnastomosisCandidate(node: MycoNode, sourceId: string): MycoNode | undefined {
+  private findAnastomosisCandidate(node: MycoNode, sourceId: string, extensionRate: number): MycoNode | undefined {
     const nearest: { node: MycoNode; distance: number }[] = [];
+    const maxFusionDistance = Math.max(0.045, extensionRate * 2.2);
 
     for (const candidate of this.nodes) {
       if (candidate.id === node.id || candidate.id === sourceId) continue;
+      if (this.hasEdgeBetween(node.id, candidate.id)) continue;
+      if (this.hasEdgeBetween(sourceId, candidate.id)) continue;
 
       const candidateDistance = distance(node, candidate);
+      if (candidateDistance > maxFusionDistance) continue;
       if (nearest.length < 5) {
         nearest.push({ node: candidate, distance: candidateDistance });
         continue;
