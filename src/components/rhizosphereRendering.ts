@@ -40,10 +40,17 @@ interface KickImpactInput {
   reducedMotion: boolean;
 }
 
+interface CameraKickNudgeInput {
+  previousNudge: number;
+  kickPulse: number;
+  deltaSeconds: number;
+  reducedMotion: boolean;
+}
+
 const EDGE_REVEAL_SECONDS = 1.4;
-const KICK_TRANSIENT_FLOOR = 0.19;
+const KICK_TRANSIENT_FLOOR = 0.09;
 export const KICK_FREQUENCY_LOW_HZ = 50;
-export const KICK_FREQUENCY_HIGH_HZ = 80;
+export const KICK_FREQUENCY_HIGH_HZ = 100;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -121,7 +128,7 @@ export function deriveReactiveVisualState({
     pulses.air
   );
   const sparkPulse = Math.max(pulses.presence, pulses.air);
-  // Kick glow is tuned to the upper-bass punch range; raw FFT narrows it further to 125-175 Hz.
+  // Kick glow is tuned to the upper-bass punch range; raw FFT narrows it further to 50-80 Hz.
   const fromTransient = kickBandPulse(pulses);
   const kickPulse = shapeKickTransient(fromTransient);
 
@@ -185,6 +192,21 @@ export function advanceKickImpact({
   const decayed = clamp01(previousImpact) * Math.exp(-Math.max(0, deltaSeconds) * decayRate);
   const thresholded = clamp01((kickPulse - 0.22) / 0.78);
   const shaped = Math.pow(thresholded, 0.72) * (reducedMotion ? 0.55 : 1);
+
+  return Math.max(decayed, shaped);
+}
+
+export function advanceCameraKickNudge({
+  previousNudge,
+  kickPulse,
+  deltaSeconds,
+  reducedMotion,
+}: CameraKickNudgeInput): number {
+  if (reducedMotion) return 0;
+
+  const decayed = clamp01(previousNudge) * Math.exp(-Math.max(0, deltaSeconds) * 9);
+  const thresholded = clamp01((kickPulse - 0.08) / 0.52);
+  const shaped = Math.pow(thresholded, 0.65);
 
   return Math.max(decayed, shaped);
 }

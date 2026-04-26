@@ -1,10 +1,13 @@
 import type { BandPulses, Bands8 } from "../audio/types";
 import {
+  advanceCameraKickNudge,
   advanceKickImpact,
   computeKickFftMaxNorm,
   computeEdgeReveal,
   computeTravelPulse,
   deriveReactiveVisualState,
+  KICK_FREQUENCY_HIGH_HZ,
+  KICK_FREQUENCY_LOW_HZ,
   mergeKickPulseFromBassFft,
 } from "./rhizosphereRendering";
 
@@ -147,14 +150,18 @@ describe("rhizosphere rendering helpers", () => {
     expect(rawTransient).toBeCloseTo(0.7);
   });
 
-  it("reads kick FFT energy only from the 125-175 Hz window", () => {
+  it(`reads kick FFT energy only from the ${KICK_FREQUENCY_LOW_HZ}-${KICK_FREQUENCY_HIGH_HZ} Hz window`, () => {
+    const sampleRate = 44_100;
     const fft = new Uint8Array(new ArrayBuffer(1024));
-    fft[5] = 255;
-    fft[6] = 128;
-    fft[8] = 200;
-    fft[9] = 255;
+    const binWidthHz = (sampleRate / 2) / fft.length;
+    const inKickRangeBin = Math.ceil(KICK_FREQUENCY_LOW_HZ / binWidthHz);
+    const belowKickRangeBin = inKickRangeBin - 1;
+    const aboveKickRangeBin = Math.floor(KICK_FREQUENCY_HIGH_HZ / binWidthHz) + 1;
+    fft[belowKickRangeBin] = 255;
+    fft[inKickRangeBin] = 200;
+    fft[aboveKickRangeBin] = 255;
 
-    expect(computeKickFftMaxNorm(fft, 44_100)).toBeCloseTo(200 / 255);
+    expect(computeKickFftMaxNorm(fft, sampleRate)).toBeCloseTo(200 / 255);
   });
 
   it("advances a visible kick impact with thresholding and decay", () => {
@@ -181,5 +188,38 @@ describe("rhizosphere rendering helpers", () => {
     expect(hit).toBeGreaterThan(0.7);
     expect(decayed).toBeLessThan(hit);
     expect(decayed).toBeGreaterThan(0);
+  });
+
+  it("keeps camera kick nudge sensitive to moderate kick hits", () => {
+    const sharedImpact = advanceKickImpact({
+      previousImpact: 0,
+      kickPulse: 0.18,
+      deltaSeconds: 1 / 60,
+      reducedMotion: false,
+    });
+    const cameraNudge = advanceCameraKickNudge({
+      previousNudge: 0,
+      kickPulse: 0.18,
+      deltaSeconds: 1 / 60,
+      reducedMotion: false,
+    });
+    const decayed = advanceCameraKickNudge({
+      previousNudge: cameraNudge,
+      kickPulse: 0,
+      deltaSeconds: 0.2,
+      reducedMotion: false,
+    });
+    const reducedMotion = advanceCameraKickNudge({
+      previousNudge: cameraNudge,
+      kickPulse: 1,
+      deltaSeconds: 1 / 60,
+      reducedMotion: true,
+    });
+
+    expect(sharedImpact).toBe(0);
+    expect(cameraNudge).toBeGreaterThan(0.25);
+    expect(decayed).toBeLessThan(cameraNudge);
+    expect(decayed).toBeGreaterThan(0);
+    expect(reducedMotion).toBe(0);
   });
 });

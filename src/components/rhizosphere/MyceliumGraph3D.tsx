@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import type { MycoSnapshotMessage } from "../../../server/domain/mycoProtocol";
+import type { Morphology, MycoSnapshotMessage } from "../../../server/domain/mycoProtocol";
 import { useAudioStore } from "../../store/audioStore";
 import { createBackgroundFieldState, stepBackgroundFieldSmooth } from "../../rhizosphere/backgroundFieldSmooth";
 import {
@@ -43,9 +43,9 @@ import {
 } from "../rhizosphereRendering";
 import { Html } from "@react-three/drei";
 
-const MAX_NODES = 1000;
+const MAX_NODES = 2000;
 const MAX_SPARKS = 800;
-const MAX_LINE_POOL = 900;
+const MAX_LINE_POOL = 1200;
 const MAX_TIP_POOL = 128;
 const FRAME_BUDGET_MS = 20;
 const BAD_FRAMES_FOR_LOW_QUALITY = 3;
@@ -54,7 +54,8 @@ const DPR_LOW = 1.25;
 const DPR_HIGH = 2;
 const EDGE_SEGMENTS = 12;
 const EDGE_POINT_COUNT = EDGE_SEGMENTS + 1;
-const TIP_GRAPH_LENGTH = 0.016;
+const TIP_GRAPH_LENGTH = 0.024;
+const CHARGE_HALO_THRESHOLD = 0.065;
 const PROFILE_SAMPLE_LIMIT = 120;
 const PROFILE_LOG_INTERVAL_MS = 3_000;
 
@@ -72,8 +73,22 @@ const _box = new THREE.Box3();
 const _v = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _c = new THREE.Color();
-const _white = new THREE.Color(0xffffff);
-const _kickGlow = new THREE.Color(0x8dffca);
+const MYCELIUM_HIGHLIGHT_HEX = 0xbcd100;
+const MYCELIUM_LINE_HEX = 0x35e8ff;
+const MYCELIUM_EMISSIVE_HEX = 0x8d5cff;
+const MYCELIUM_CHARGE_HALO_HEX = 0xff4fd8;
+const MYCELIUM_KICK_GLOW_HEX = 0xf5ff6b;
+const MYCELIUM_ANASTOMOSIS_HEX = 0xb36cff;
+const MYCELIUM_SPARK_CORE_HEX = 0xfff3a3;
+const MYCELIUM_SPORE_CLOUD_HEX = 0xc7ff5f;
+const MYCELIUM_TIP_HIGH_ENERGY_HEX = 0xff6bd6;
+const MYCELIUM_NODE_OPACITY = 0.98;
+const BRANCH_ECM_ORANGE_HEX = 0xffb15f;
+const BRANCH_AM_GREEN_HEX = 0xa4ff5f;
+const BRANCH_BALANCED_WHITE_HEX = 0x9aa8a1;
+const _white = new THREE.Color(MYCELIUM_HIGHLIGHT_HEX);
+const _kickGlow = new THREE.Color(MYCELIUM_KICK_GLOW_HEX);
+const _anastomosisGlow = new THREE.Color(MYCELIUM_ANASTOMOSIS_HEX);
 const _w0 = new THREE.Vector3();
 const _w1 = new THREE.Vector3();
 const _boundsCenter = new THREE.Vector3();
@@ -127,6 +142,20 @@ function logProfileSamples(stats: FrameProfileStats): void {
   console.table(rows);
 }
 
+function branchColorForMorphology(morphology: Morphology, out: THREE.Color): THREE.Color {
+  if (morphology === "ECM") return out.set(BRANCH_ECM_ORANGE_HEX);
+  if (morphology === "AM") return out.set(BRANCH_AM_GREEN_HEX);
+  return out.set(BRANCH_BALANCED_WHITE_HEX);
+}
+
+function branchOpacityScaleForMorphology(morphology: Morphology): number {
+  return morphology === "Balanced" ? 0.58 : 0.82;
+}
+
+function branchOpacityCapForMorphology(morphology: Morphology): number {
+  return morphology === "Balanced" ? 0.38 : 0.52;
+}
+
 function setWideLinePositions(line: Line2, positions: Float32Array, pointCount: number): void {
   const start = line.geometry.getAttribute("instanceStart") as THREE.InterleavedBufferAttribute | undefined;
   const segmentBuffer = start?.data;
@@ -177,8 +206,8 @@ function createPooledLine(index: number, pointCount: number): Line2 {
   const line = new Line2(
     new LineGeometry(),
     new LineMaterial({
-      color: 0xa8ffe0,
-      linewidth: 0.035,
+      color: MYCELIUM_LINE_HEX,
+      linewidth: 0.025,
       worldUnits: true,
       transparent: true,
       opacity: 0,
@@ -268,6 +297,7 @@ export function MyceliumGraph3D({
 }: Props) {
   const [hasSnapshot, setHasSnapshot] = useState(false);
   const instancedRef = useRef<THREE.InstancedMesh | null>(null);
+  const chargeHaloRef = useRef<THREE.InstancedMesh | null>(null);
   const sparkRef = useRef<THREE.InstancedMesh | null>(null);
   const pointsRef = useRef<THREE.Points | null>(null);
   const pointsGeomRef = useRef<THREE.BufferGeometry<THREE.NormalBufferAttributes> | null>(null);
@@ -300,14 +330,29 @@ export function MyceliumGraph3D({
   const lineResolutionRef = useRef({ width: 0, height: 0 });
 
   const geometry = useMemo(() => new THREE.SphereGeometry(1, 14, 12), []);
+  const chargeHaloGeometry = useMemo(() => new THREE.SphereGeometry(1, 18, 14), []);
   const material = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
         color: 0xffffff,
-        emissive: 0x7effc2,
-        emissiveIntensity: 0.42,
-        roughness: 0.34,
+        emissive: MYCELIUM_EMISSIVE_HEX,
+        emissiveIntensity: 0.32,
+        roughness: 0.64,
         metalness: 0,
+        vertexColors: true,
+        opacity: MYCELIUM_NODE_OPACITY,
+        depthWrite: false,
+      }),
+    []
+  );
+  const chargeHaloMaterial = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: MYCELIUM_CHARGE_HALO_HEX,
+        transparent: true,
+        opacity: 0.62,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
         vertexColors: true,
       }),
     []
@@ -316,13 +361,13 @@ export function MyceliumGraph3D({
   const sparkMaterial = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
-        color: 0xd2fff8,
-        emissive: 0x5ce7ff,
-        emissiveIntensity: 0.7,
-        roughness: 0.2,
+        color: MYCELIUM_SPARK_CORE_HEX,
+        emissive: MYCELIUM_CHARGE_HALO_HEX,
+        emissiveIntensity: 0.3,
+        roughness: 0.5,
         metalness: 0,
         transparent: true,
-        opacity: 0.92,
+        opacity: 0.78,
         depthWrite: false,
       }),
     []
@@ -422,13 +467,17 @@ export function MyceliumGraph3D({
     sparkMaterial.opacity = Math.min(1, 0.82 + reactive.sparkIntensity * 0.1 + materialImpact * 0.18);
 
     const inst = instancedRef.current;
+    const chargeHalo = chargeHaloRef.current;
     const spark = sparkRef.current;
     const pPoints = pointsRef.current;
     const pGeom = pointsGeomRef.current;
-    if (state.scene.fog && state.scene.fog instanceof THREE.Fog) {
+    if (state.scene.fog instanceof THREE.Fog) {
       const f = state.scene.fog;
       f.near = 6 + (1 - reactive.substrateBreath) * 2;
       f.far = 40 + reactive.bassEnergy * 6;
+    } else if (state.scene.fog instanceof THREE.FogExp2) {
+      const f = state.scene.fog;
+      f.density = 0.018 + (1 - reactive.substrateBreath) * 0.004 - reactive.bassEnergy * 0.002;
     }
     markProfile("reactive");
 
@@ -514,7 +563,9 @@ export function MyceliumGraph3D({
           const cache = toCache;
           const { snapshot, nodeSeeds, renderedNodes, renderEdges, renderTips } = cache;
           const voltage = Math.min(1, snapshot.telemetry.bioVoltageMv / 2.1);
+          const anastomosisRate = snapshot.telemetry.anastomosisRate;
           const nNodes = renderedNodes.length;
+          let chargeHaloN = 0;
 
           for (let i = 0; i < nNodes; i += 1) {
             const node = renderedNodes[i];
@@ -537,6 +588,15 @@ export function MyceliumGraph3D({
             _c.lerp(_kickGlow, materialImpact * 0.12);
             _c.multiplyScalar(0.88 + reveal * 0.22 + node.charge * 0.14 + materialImpact * 0.34);
             inst.setColorAt(i, _c);
+            if (chargeHalo && reveal > 0 && node.charge > CHARGE_HALO_THRESHOLD && chargeHaloN < MAX_NODES) {
+              const haloScale = r * (2.35 + node.charge * 4.2 + voltage * 1.2);
+              writeScaleTranslationMatrix(chargeHalo, chargeHaloN, _p, haloScale);
+              _c.set(MYCELIUM_CHARGE_HALO_HEX);
+              _c.lerp(_white, Math.min(0.45, node.charge * 0.35));
+              _c.multiplyScalar(0.7 + node.charge * 1.4 + voltage * 0.5);
+              chargeHalo.setColorAt(chargeHaloN, _c);
+              chargeHaloN += 1;
+            }
             _box.expandByPoint(_p);
           }
           inst.count = nNodes;
@@ -544,6 +604,13 @@ export function MyceliumGraph3D({
             inst.instanceColor.needsUpdate = true;
           }
           inst.instanceMatrix.needsUpdate = true;
+          if (chargeHalo) {
+            chargeHalo.count = chargeHaloN;
+            if (chargeHalo.instanceColor) {
+              chargeHalo.instanceColor.needsUpdate = true;
+            }
+            chargeHalo.instanceMatrix.needsUpdate = true;
+          }
           markProfile("nodes");
 
           for (let eix = 0; eix < renderEdges.length; eix += 1) {
@@ -619,11 +686,22 @@ export function MyceliumGraph3D({
             const m = L.material;
             if (m instanceof LineMaterial) {
               const re = computeEdgeReveal(edge.age, revealE);
-              m.opacity = Math.min(1, (0.25 + edge.conductivity * 0.52 + materialImpact * 0.42) * re);
-              m.linewidth = hyphalMainLineWidth(edge, srcN, tgtN, revealE) * (1 + materialImpact * 0.85);
-              _c.copy(colorForMorphology(tgtN.morphology === "Balanced" ? srcN.morphology : tgtN.morphology));
+              const fusedBoost = edge.fused ? 0.35 + anastomosisRate * 0.55 : anastomosisRate > 0.55 ? 0.08 : 0;
+              const branchMorphology = tgtN.morphology === "Balanced" ? srcN.morphology : tgtN.morphology;
+              m.opacity = Math.min(
+                branchOpacityCapForMorphology(branchMorphology),
+                (0.045 + edge.conductivity * 0.14 + fusedBoost * 0.24 + materialImpact * 0.34) *
+                  re *
+                  branchOpacityScaleForMorphology(branchMorphology)
+              );
+              m.linewidth =
+                hyphalMainLineWidth(edge, srcN, tgtN, revealE) * (1 + fusedBoost * 1.45 + materialImpact * 0.55);
+              branchColorForMorphology(branchMorphology, _c);
+              if (edge.fused) {
+                _c.lerp(_anastomosisGlow, 0.58);
+              }
               _c.lerp(_kickGlow, materialImpact * 0.16);
-              _c.multiplyScalar(1 + materialImpact * 0.22);
+              _c.multiplyScalar(0.48 + fusedBoost * 0.32 + materialImpact * 0.58);
               m.color.copy(_c);
             }
           }
@@ -671,9 +749,15 @@ export function MyceliumGraph3D({
             setWideLinePositions(TL, TIP_LINE_POINTS, 2);
             const tm = TL.material;
             if (tm instanceof LineMaterial) {
-              tm.opacity = Math.min(1, (0.32 + energy * 0.5 + materialImpact * 0.45) * show);
-              tm.linewidth = (0.014 + energy * 0.024) * (1 + materialImpact * 0.9);
-              tm.color.set(materialImpact > 0.35 ? 0x9cffbc : 0xa8ffe0);
+              tm.opacity = Math.min(0.78, (0.16 + energy * 0.22 + materialImpact * 0.58) * show);
+              tm.linewidth = (0.032 + energy * 0.045) * (1 + materialImpact * 0.9);
+              tm.color.set(
+                materialImpact > 0.35
+                  ? MYCELIUM_KICK_GLOW_HEX
+                  : energy > 0.72
+                    ? MYCELIUM_TIP_HIGH_ENERGY_HEX
+                    : MYCELIUM_LINE_HEX
+              );
             }
           }
           for (let h = renderTips.length; h < MAX_TIP_POOL; h += 1) {
@@ -732,6 +816,10 @@ export function MyceliumGraph3D({
           spark.count = 0;
           spark.instanceMatrix.needsUpdate = true;
         }
+        if (chargeHalo) {
+          chargeHalo.count = 0;
+          chargeHalo.instanceMatrix.needsUpdate = true;
+        }
         for (let h = 0; h < MAX_LINE_POOL; h += 1) {
           const L = linePoolRef.current[h];
           hidePooledLine(L);
@@ -746,6 +834,10 @@ export function MyceliumGraph3D({
     } else {
       boundsOutRef.current.center.set(0, 0, 0);
       boundsOutRef.current.radius = 1.0;
+      if (chargeHalo) {
+        chargeHalo.count = 0;
+        chargeHalo.instanceMatrix.needsUpdate = true;
+      }
     }
 
     const cost = performance.now() - frameStart;
@@ -790,6 +882,7 @@ export function MyceliumGraph3D({
   return (
     <group>
       <instancedMesh ref={instancedRef} args={[geometry, material, MAX_NODES]} frustumCulled={false} />
+      <instancedMesh ref={chargeHaloRef} args={[chargeHaloGeometry, chargeHaloMaterial, MAX_NODES]} frustumCulled={false} />
       <instancedMesh ref={sparkRef} args={[sparkGeometry, sparkMaterial, MAX_SPARKS]} frustumCulled={false} />
       <group ref={lineGroupRef} />
       <group ref={tipGroupRef} />
@@ -809,35 +902,35 @@ export function MyceliumGraph3D({
         />
         <pointsMaterial
           attach="material"
-          size={0.06}
-          color={0xceffe2}
+          size={0.09}
+          color={MYCELIUM_SPORE_CLOUD_HEX}
           transparent
-          opacity={0.5}
+          opacity={0.2}
           depthWrite={false}
           sizeAttenuation
         />
       </points>
       {!hasSnapshot && (
-        <group position={[0, 0.08, 0]} scale={1.8}>
+        <group position={[0, 0.08, 0]} scale={1.2}>
           <mesh position={[0, 0.02, 0]}>
             <sphereGeometry args={[0.1, 18, 14]} />
-            <meshBasicMaterial color="#a8ffe0" />
+            <meshBasicMaterial color="#c7ff5f" />
           </mesh>
           <mesh position={[0.42, 0.03, -0.08]}>
             <sphereGeometry args={[0.065, 16, 12]} />
-            <meshBasicMaterial color="#69ecff" />
+            <meshBasicMaterial color="#35e8ff" />
           </mesh>
           <mesh position={[-0.36, -0.01, 0.16]}>
             <sphereGeometry args={[0.075, 16, 12]} />
-            <meshBasicMaterial color="#ebac6c" />
+            <meshBasicMaterial color="#ff6bd6" />
           </mesh>
           <mesh rotation={[-Math.PI / 2, 0, 0]}>
             <torusGeometry args={[0.42, 0.012, 8, 80]} />
-            <meshBasicMaterial color="#7effc2" transparent opacity={0.85} />
+            <meshBasicMaterial color="#b36cff" transparent opacity={0.85} />
           </mesh>
           <mesh rotation={[-Math.PI / 2, 0, 0.55]}>
             <torusGeometry args={[0.72, 0.006, 8, 96]} />
-            <meshBasicMaterial color="#5ce7ff" transparent opacity={0.65} />
+            <meshBasicMaterial color="#ff4fd8" transparent opacity={0.65} />
           </mesh>
         </group>
       )}
@@ -845,7 +938,7 @@ export function MyceliumGraph3D({
         <Html position={[0, 0.2, 0]} center>
           <div
             style={{
-              color: "rgba(206,255,226,0.9)",
+              color: "rgba(248,250,252,0.9)",
               fontSize: 14,
               fontFamily: "system-ui, sans-serif",
               pointerEvents: "none",

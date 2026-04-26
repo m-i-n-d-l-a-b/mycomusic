@@ -7,7 +7,7 @@ export const WORLD_GRAPH_SCALE = 15;
 
 export const TRAVEL_PULSE_MIN = 0.025;
 export const CHARGE_DYNAMIC_THRESHOLD = 0.04;
-export const PARTICLE_CLOUD_COUNT = 96;
+export const PARTICLE_CLOUD_COUNT = 128;
 export const PARTICLE_CLOUD_RADIUS = 13.5;
 export const PARTICLE_CLOUD_VERTICAL_RADIUS = 5.2;
 
@@ -191,15 +191,15 @@ export function hyphalMainLineWidth(
 ): number {
   const morphology: Morphology = target.morphology === "Balanced" ? source.morphology : target.morphology;
   const reveal = computeEdgeReveal(edge.age, revealProgress);
-  const morphologyScale = morphology === "ECM" ? 1.45 : morphology === "AM" ? 0.72 : 1;
-  const thickness = 0.018 + edge.thickness * 0.085 * morphologyScale;
+  const morphologyScale = morphology === "ECM" ? 1.15 : morphology === "AM" ? 0.72 : 1;
+  const thickness = 0.009 + edge.thickness * 0.055 * morphologyScale;
   return thickness * (0.28 + reveal * 0.72);
 }
 
 export function nodeSphereRadius(node: MycoNode, reveal: number, time: number, seed: number, reducedMotion: boolean): number {
   const pulse = reducedMotion ? 0.5 : Math.sin(time * 0.004 + seed * 10) * 0.5 + 0.5;
   const morphologyScale = node.morphology === "ECM" ? 1.25 : node.morphology === "AM" ? 0.72 : 1;
-  const base = 0.035 + node.radius * 1.85 * morphologyScale;
+  const base = 0.029 + node.radius * 1.36 * morphologyScale;
   return base * (0.45 + reveal * 0.55) * (0.82 + node.charge * 0.42 + pulse * 0.08);
 }
 

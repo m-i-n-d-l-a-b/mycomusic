@@ -11,15 +11,15 @@ interface InternalTip extends MycoTip {
   age: number;
 }
 
-const DEFAULT_MAX_NODES = 640;
+const DEFAULT_MAX_NODES = 1200;
 /** Baseline growth throughput; lower = fewer extension events per second at the same forces. */
-const BASELINE_GROWTH_FPS = 10;
+const BASELINE_GROWTH_FPS = 12;
 const MIN_GROWTH_PRESSURE = 0.08;
-const MIN_ANASTOMOSIS_NODES = 12;
+const MIN_ANASTOMOSIS_NODES = 10;
 /** At few nodes, growth budget accumulates at `SEEDLING_GROWTH_MULT` of full rate; scales linearly to 1 by this count. */
-const GROWTH_RAMP_FULL_NODE_COUNT = 400;
+const GROWTH_RAMP_FULL_NODE_COUNT = 200;
 const SEEDLING_GROWTH_MULT = 0.85;
-const MIN_BRANCH_SEPARATION_DOT = 0.94;
+const MIN_BRANCH_SEPARATION_DOT = 0.84;
 const BRANCH_DIRECTION_ATTEMPTS = 6;
 
 function createPrng(seed: number): () => number {
@@ -74,7 +74,7 @@ export class MyceliumGraph {
     growthPressure: 0,
     morphology: "Balanced",
     branchProbability: 0,
-    edgeThickness: 0.2,
+    edgeThickness: 0.12,
     extensionRate: 0.02,
     harmony: 0,
     anastomosisRate: 0,
@@ -218,14 +218,14 @@ export class MyceliumGraph {
     const birthOrder = this.nextBirthOrder;
     this.nextBirthOrder += 1;
     tip.age += deltaSec;
-    const morphologyJitter = forces.morphology === "AM" ? 0.9 : forces.morphology === "ECM" ? 0.35 : 0.6;
-    const verticalBias = forces.morphology === "AM" ? 0.08 : forces.morphology === "ECM" ? -0.03 : 0.02;
+    const morphologyJitter = forces.morphology === "AM" ? 0.8 : forces.morphology === "ECM" ? 0.35 : 0.6;
+    const verticalBias = forces.morphology === "AM" ? 0.06 : forces.morphology === "ECM" ? -0.03 : 0.02;
     const direction = normalizeDirection({
       dx: tip.dx + (this.rand() - 0.5) * morphologyJitter,
       dy: tip.dy + (this.rand() - 0.5) * morphologyJitter + verticalBias,
       dz: tip.dz + (this.rand() - 0.5) * morphologyJitter,
     });
-    const length = forces.extensionRate * (0.65 + this.rand() * 0.7);
+    const length = forces.extensionRate * (0.85 + this.rand() * 0.7);
     const morphology = forces.morphology;
     const node: MycoNode = {
       id: `node-${this.nextNodeId}`,
@@ -354,8 +354,8 @@ export class MyceliumGraph {
   }
 
   private radiusFor(morphology: Morphology, forces: MycoForces): number {
-    if (morphology === "ECM") return 0.018 + forces.edgeThickness * 0.04;
-    if (morphology === "AM") return 0.009 + forces.edgeThickness * 0.02;
+    if (morphology === "ECM") return 0.018 + forces.edgeThickness * 0.03;
+    if (morphology === "AM") return 0.009 + forces.edgeThickness * 0.01;
     return 0.012 + forces.edgeThickness * 0.025;
   }
 
@@ -373,7 +373,7 @@ export class MyceliumGraph {
       id: `edge-${this.nextEdgeId}`,
       source: node.id,
       target: nearest.id,
-      thickness: Math.max(0.12, forces.edgeThickness * 0.8),
+      thickness: Math.max(0.12, forces.edgeThickness * 0.7),
       conductivity: clamp(0.45 + forces.harmony * 0.5),
       age: 0,
       fused: true,
