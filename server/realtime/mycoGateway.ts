@@ -11,7 +11,8 @@ import {
 import { MycoSimulation } from "../simulation/mycoSimulation";
 
 const MAX_FEATURE_FPS = 35;
-const SNAPSHOT_FPS = 30;
+/** Full graph snapshots per second; keep audio features at ~30fps from the client. */
+const SNAPSHOT_FPS = 12;
 const MAX_BUFFERED_BYTES = 1_000_000;
 const MAX_MESSAGE_BYTES = 16_384;
 const MAX_DELTA_SEC = 0.25;

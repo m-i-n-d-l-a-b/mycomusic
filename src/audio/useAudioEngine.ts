@@ -8,6 +8,50 @@ const SILENCE_THRESHOLD = 8; // Max freq value (0–255) below which we consider
 const SILENCE_STOP_SECONDS = 15; // Seconds of consecutive silence before auto-stopping
 const AUDIO_FEATURE_COMMIT_INTERVAL_MS = 1_000 / 30;
 
+type CaptureFocusBehavior = "focus-captured-surface" | "no-focus-change";
+
+interface CaptureControllerLike {
+  setFocusBehavior: (behavior: CaptureFocusBehavior) => void;
+}
+
+type DisplayMediaOptionsWithFocusControl = DisplayMediaStreamOptions & {
+  controller?: CaptureControllerLike;
+};
+
+function createCaptureController(): CaptureControllerLike | null {
+  const CaptureControllerCtor = (window as Window & {
+    CaptureController?: new () => CaptureControllerLike;
+  }).CaptureController;
+  return CaptureControllerCtor ? new CaptureControllerCtor() : null;
+}
+
+function keepAppFocusedAfterCapture(): void {
+  window.setTimeout(() => {
+    window.focus();
+  }, 0);
+}
+
+async function getDisplayMediaWithoutFocusSteal(options: DisplayMediaStreamOptions): Promise<MediaStream> {
+  const controller = createCaptureController();
+  const requestOptions: DisplayMediaOptionsWithFocusControl = { ...options };
+
+  if (controller) {
+    requestOptions.controller = controller;
+  }
+
+  const streamPromise = navigator.mediaDevices.getDisplayMedia(requestOptions);
+
+  try {
+    controller?.setFocusBehavior("no-focus-change");
+  } catch {
+    // Unsupported surfaces/browsers fall back to the normal focus behavior.
+  }
+
+  const stream = await streamPromise;
+  keepAppFocusedAfterCapture();
+  return stream;
+}
+
 function createSilenceDetector(params: {
   analyser: AnalyserNode;
   audioTrack: MediaStreamTrack;
@@ -561,7 +605,7 @@ export function useAudioEngine() {
         suppressLocalAudioPlayback: false,
       };
 
-      const stream = await navigator.mediaDevices.getDisplayMedia({
+      const stream = await getDisplayMediaWithoutFocusSteal({
         video: true,
         audio: audioConstraints,
       });

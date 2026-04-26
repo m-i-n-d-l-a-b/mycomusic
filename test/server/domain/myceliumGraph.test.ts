@@ -33,7 +33,7 @@ describe("MyceliumGraph", () => {
   it("keeps graph coordinates finite and edge endpoints valid", () => {
     const graph = new MyceliumGraph({ seed: 7 });
 
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 60; i++) {
       graph.step(forces, 1 / 30);
     }
 
@@ -55,16 +55,26 @@ describe("MyceliumGraph", () => {
   it("scales growth events with elapsed time instead of snapshot tick count", () => {
     const graph = new MyceliumGraph({ seed: 7 });
 
-    graph.step(forces, 0.75);
+    graph.step(forces, 2);
 
-    expect(graph.snapshot().nodes.length).toBeGreaterThan(3);
+    expect(graph.snapshot().nodes.length).toBeGreaterThan(2);
+  });
+
+  it("does not create nodes from pulse spikes without sustained growth pressure", () => {
+    const graph = new MyceliumGraph({ seed: 7 });
+
+    for (let i = 0; i < 180; i++) {
+      graph.step({ ...forces, growthPressure: 0.08, pulse: 1 }, 1 / 30);
+    }
+
+    expect(graph.snapshot().nodes.length).toBe(1);
   });
 
   it("raises topology index when anastomosis creates fused graph edges", () => {
     const tree = new MyceliumGraph({ seed: 9 });
     const graph = new MyceliumGraph({ seed: 9 });
 
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 180; i++) {
       tree.step({ ...forces, harmony: 0, anastomosisRate: 0 }, 1 / 30);
       graph.step({ ...forces, harmony: 1, anastomosisRate: 1 }, 1 / 30);
     }

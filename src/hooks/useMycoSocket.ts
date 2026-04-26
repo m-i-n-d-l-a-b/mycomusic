@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { MutableRefObject } from "react";
 import { MycoSimulation } from "../../server/simulation/mycoSimulation";
 import { useAudioStore } from "../store/audioStore";
 import type {
@@ -11,9 +12,10 @@ import type {
 
 type ConnectionState = "connecting" | "open" | "closed" | "error" | "local";
 
-interface UseMycoSocketResult {
+/** Full graph snapshots: latest copy in `snapshotRef` (server ~12/s) for canvas rendering. */
+export interface UseMycoSocketResult {
   connectionState: ConnectionState;
-  snapshot: MycoSnapshotMessage | null;
+  snapshotRef: MutableRefObject<MycoSnapshotMessage | null>;
   error: string | null;
   sessionId: string;
 }
@@ -21,7 +23,8 @@ interface UseMycoSocketResult {
 const FEATURE_FRAME_INTERVAL_MS = 1_000 / 30;
 const INITIAL_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 5_000;
-const SNAPSHOT_INTERVAL_MS = 1_000 / 30;
+/** Matches server `SNAPSHOT_FPS` in `server/realtime/mycoGateway.ts` for local fallback. */
+const SNAPSHOT_INTERVAL_MS = 1_000 / 12;
 
 function getConfiguredWebSocketUrl(): string | null {
   const configuredUrl = import.meta.env.VITE_MYCO_WS_URL;
@@ -86,11 +89,21 @@ function parseServerMessage(data: unknown): MycoServerMessage | null {
   return null;
 }
 
+/**
+ * Pushes the latest full snapshot to `snapshotRef` for the canvas to read on every rAF.
+ */
+function wireSnapshot(
+  msg: MycoSnapshotMessage,
+  snapshotRef: MutableRefObject<MycoSnapshotMessage | null>
+): void {
+  snapshotRef.current = msg;
+}
+
 export function useMycoSocket(): UseMycoSocketResult {
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
-  const [snapshot, setSnapshot] = useState<MycoSnapshotMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
+  const snapshotRef = useRef<MycoSnapshotMessage | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const sessionIdRef = useRef(sessionId);
   const lastSentAtRef = useRef(0);
@@ -145,12 +158,13 @@ export function useMycoSocket(): UseMycoSocketResult {
         const now = Date.now();
         const deltaSec = Math.min(0.25, Math.max(1 / 120, (now - localLastTickAtRef.current) / 1_000));
         localLastTickAtRef.current = now;
-        setSnapshot({
+        const next: MycoSnapshotMessage = {
           type: "myco.snapshot",
           sessionId: localSessionId,
           timestamp: now,
           ...simulation.step(deltaSec, 1),
-        });
+        };
+        wireSnapshot(next, snapshotRef);
       }, SNAPSHOT_INTERVAL_MS);
     };
 
@@ -216,7 +230,7 @@ export function useMycoSocket(): UseMycoSocketResult {
           return;
         }
         if (message.type === "myco.snapshot") {
-          setSnapshot(message);
+          wireSnapshot(message, snapshotRef);
           return;
         }
         if (message.type === "myco.error") {
@@ -276,6 +290,7 @@ export function useMycoSocket(): UseMycoSocketResult {
 
     return () => {
       disposed = true;
+      snapshotRef.current = null;
       if (reconnectTimerRef.current !== null) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
@@ -289,7 +304,7 @@ export function useMycoSocket(): UseMycoSocketResult {
 
   return {
     connectionState,
-    snapshot,
+    snapshotRef,
     error,
     sessionId,
   };

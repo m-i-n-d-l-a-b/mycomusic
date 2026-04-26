@@ -1,6 +1,5 @@
 import { useId, useState } from "react";
 import { AudioControls } from "./components/AudioControls";
-import { FungalTelemetryHud } from "./components/FungalTelemetryHud";
 import { RhizosphereCanvas } from "./components/RhizosphereCanvas";
 import { useMycoSocket } from "./hooks/useMycoSocket";
 import "./styles.css";
@@ -8,11 +7,7 @@ import "./styles.css";
 export function App() {
   const [isOverlayOpen, setIsOverlayOpen] = useState(false);
   const overlayContentId = useId();
-  const { connectionState, error, sessionId, snapshot } = useMycoSocket();
-  const telemetry = snapshot?.telemetry;
-  const morphology = telemetry?.morphology ?? "Balanced";
-  const symbioticState = telemetry?.symbioticState ?? "Resource Hoarding";
-  const topology = telemetry?.topologyLabel ?? "Dendritic Tree";
+  const { connectionState, snapshotRef } = useMycoSocket();
   const statusText =
     connectionState === "open"
       ? "Backend link open"
@@ -28,19 +23,17 @@ export function App() {
     <main className="app-shell" data-connection={connectionState}>
       <div className="background-noise" />
       <div className="background-vignette" />
-      <RhizosphereCanvas snapshot={snapshot} />
+      <RhizosphereCanvas snapshotRef={snapshotRef} />
 
       <aside
         className="ui-overlay"
         data-collapsed={!isOverlayOpen}
-        aria-label="Myco-Acoustic Engine menu"
+        aria-label="MycoMusic menu"
       >
         <div className="overlay-topbar">
           <div className="overlay-title">
-            <p className="eyebrow">Rhizosphere Interface</p>
-            <h1>Myco-Acoustic Engine</h1>
+            <h1>MycoMusic</h1>
             <span className="connection-pill" data-state={connectionState}>
-              {statusText}
             </span>
           </div>
           <button
@@ -60,12 +53,6 @@ export function App() {
           </button>
         </div>
 
-        <div className="overlay-summary" aria-hidden={!isOverlayOpen}>
-          <span>{morphology} morphology</span>
-          <span>{topology}</span>
-          <span>{symbioticState}</span>
-        </div>
-
         <div
           id={overlayContentId}
           className="overlay-content"
@@ -77,12 +64,6 @@ export function App() {
             real time.
           </p>
           <AudioControls />
-          <FungalTelemetryHud
-            connectionState={connectionState}
-            error={error}
-            sessionId={sessionId}
-            snapshot={snapshot}
-          />
         </div>
       </aside>
 

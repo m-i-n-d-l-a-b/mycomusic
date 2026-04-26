@@ -12,7 +12,12 @@ interface InternalTip extends MycoTip {
 }
 
 const DEFAULT_MAX_NODES = 640;
-const BASELINE_GROWTH_FPS = 8;
+/** Baseline growth throughput; lower = fewer extension events per second at the same forces. */
+const BASELINE_GROWTH_FPS = 10;
+const MIN_GROWTH_PRESSURE = 0.08;
+/** At few nodes, growth budget accumulates at `SEEDLING_GROWTH_MULT` of full rate; scales linearly to 1 by this count. */
+const GROWTH_RAMP_FULL_NODE_COUNT = 400;
+const SEEDLING_GROWTH_MULT = 0.85;
 
 function createPrng(seed: number): () => number {
   let state = seed >>> 0;
@@ -46,7 +51,7 @@ export class MyceliumGraph {
     growthPressure: 0,
     morphology: "Balanced",
     branchProbability: 0,
-    edgeThickness: 0.25,
+    edgeThickness: 0.2,
     extensionRate: 0.02,
     harmony: 0,
     anastomosisRate: 0,
@@ -133,18 +138,31 @@ export class MyceliumGraph {
     this.adjacency.set(edge.target, targetEdges);
   }
 
+  /** Slower accumulation while the colony is small; approaches 1 as the network grows. */
+  private growthStartRamp(): number {
+    const n = this.nodes.length;
+    if (n >= GROWTH_RAMP_FULL_NODE_COUNT) return 1;
+    const t = (n - 1) / Math.max(1, GROWTH_RAMP_FULL_NODE_COUNT - 1);
+    return SEEDLING_GROWTH_MULT + (1 - SEEDLING_GROWTH_MULT) * t;
+  }
+
   private computeGrowthEvents(forces: MycoForces, deltaSec: number): number {
-    if (forces.growthPressure <= 0.03 && forces.pulse <= 0.03) {
+    if (forces.growthPressure <= MIN_GROWTH_PRESSURE) {
       this.growthBudget = 0;
       return 0;
     }
 
     const activeTips = Math.max(1, this.tips.length);
+    const growthSignal = clamp((forces.growthPressure - MIN_GROWTH_PRESSURE) / (1 - MIN_GROWTH_PRESSURE));
+    const easedGrowth = Math.pow(growthSignal, 1.28);
+    const sustainedPulseBoost =
+      forces.pulse > 0.72 && forces.growthPressure > 0.35 ? (forces.pulse - 0.72) * 0.22 : 0;
     const eventsAtBaselineFps = Math.max(
-      0.25,
-      Math.min(2.5, 0.35 + forces.growthPressure * Math.sqrt(activeTips))
+      0,
+      Math.min(1.35, easedGrowth * (0.28 + Math.sqrt(activeTips) * 0.14) + sustainedPulseBoost)
     );
-    this.growthBudget += eventsAtBaselineFps * deltaSec * BASELINE_GROWTH_FPS;
+    const ramp = this.growthStartRamp();
+    this.growthBudget += eventsAtBaselineFps * deltaSec * BASELINE_GROWTH_FPS * ramp;
     const events = Math.floor(this.growthBudget);
     this.growthBudget -= events;
 

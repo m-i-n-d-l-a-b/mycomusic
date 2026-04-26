@@ -46,7 +46,7 @@ describe("MycoSimulation", () => {
     simulation.acceptFeature(featureFrame());
 
     let activeSnapshot = simulation.step(1 / 30);
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 89; i++) {
       activeSnapshot = simulation.step(1 / 30);
     }
     expect(activeSnapshot.nodes.length).toBeGreaterThan(1);
@@ -70,7 +70,9 @@ describe("MycoSimulation", () => {
 
     const maxRadius = Math.max(...snapshot.nodes.map((node) => Math.hypot(node.x, node.y)));
 
-    expect(snapshot.nodes.length).toBeGreaterThan(20);
+    // Growth is intentionally paced so the network keeps forming well beyond the first minute.
+    expect(snapshot.nodes.length).toBeGreaterThan(2);
+    expect(snapshot.nodes.length).toBeLessThan(8);
     expect(maxRadius).toBeLessThan(0.35);
   });
 });
